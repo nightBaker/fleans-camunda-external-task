@@ -1,0 +1,33 @@
+## .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+.vscode/
+.idea/
+
+## Test artifacts
+TestResults/
+coverage/
+*.trx
+*.coverage
+
+## OS junk
+.DS_Store
+Thumbs.db
+
+## Logs (Orleans test-cluster output)
+logs/
+*.log
+
+## NuGet
+*.nupkg
+*.snupkg
+artifacts/
+
+# Local SQLite external-task table (Development)
+*.db
+*.db-shm
+*.db-wal

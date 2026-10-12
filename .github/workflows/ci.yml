@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      # Restores Fleans.Worker $(FleansVersion) from nuget.org — red until that Fleans release is published.
+      - run: dotnet restore
+      - run: dotnet build --no-restore -c Release
+      - name: Test (SQLite + Orleans test cluster + PostgreSQL via Testcontainers)
+        env:
+          FLEANS_PG_TESTS: "1"
+        run: dotnet test --no-build -c Release --logger "trx;LogFileName=tests.trx"
+      - name: Fail if the PostgreSQL tests were skipped
+        run: |
+          trx=$(find tests -name tests.trx | head -1)
+          skipped=$(python3 -c "import sys,xml.etree.ElementTree as ET; ns={'t':'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}; c=ET.parse(sys.argv[1]).getroot().find('.//t:Counters',ns); print(int(c.get('notExecuted','0'))+int(c.get('inconclusive','0')))" "$trx")
+          echo "skipped/inconclusive: $skipped"
+          [ "$skipped" -eq 0 ]
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t fleans-camunda-external-task:ci .
