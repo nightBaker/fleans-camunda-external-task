@@ -23,7 +23,7 @@ Camunda workers ──fetchAndLock / complete / failure / bpmnError──┘ (/e
 | `tests/` | REST wire-format tests (SQLite, plus PostgreSQL with `FLEANS_PG_TESTS=1`) and stream-handler tests on an Orleans test cluster. |
 | `docs/manual-test-plan/` | End-to-end check with a real Camunda client against a real engine. |
 
-**Compatibility:** requires **Fleans 0.6.0+** (`IWorkflowInstanceCallback.GetVariablesIfActive`).
+**Compatibility:** requires **Fleans 0.6.0-preview.1 or later** (`IWorkflowInstanceCallback.GetVariablesIfActive`). Run it against an engine built from the same Fleans version or newer.
 `FleansVersion` in `Directory.Build.props` pins the `Fleans.Worker` package the plugin compiles against.
 
 ## 1. Adapt the BPMN

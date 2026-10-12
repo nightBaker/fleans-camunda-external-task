@@ -25,5 +25,5 @@ BPMN: replace `camunda:type="external" camunda:topic="charge-card"` with `type="
 See the [repository README](https://github.com/nightBaker/fleans-camunda-external-task#readme)
 for the ready-to-run host, configuration, and differences from Camunda 7: there are no incidents,
 so `retries = 0` fails the activity, and variables sent with `bpmnError` are ignored.
-Requires Fleans 0.6.0+.
+Requires Fleans 0.6.0-preview.1 or later.
 

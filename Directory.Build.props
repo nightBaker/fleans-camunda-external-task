@@ -2,9 +2,11 @@
   <PropertyGroup>
     <!-- Package version of this plugin. Tracks the Fleans engine release it is built against. -->
     <VersionPrefix>0.6.0</VersionPrefix>
+    <!-- Prerelease while it depends on a Fleans prerelease (a stable package cannot depend on one). -->
+    <VersionSuffix>preview.1</VersionSuffix>
     <!-- Fleans plugin-author packages (Fleans.Worker + abstractions) this plugin compiles against.
-         0.6.0 is the first release with IWorkflowInstanceCallback.GetVariablesIfActive (#816). -->
-    <FleansVersion>0.6.0</FleansVersion>
+         0.6.0-preview.1 is the first published version with IWorkflowInstanceCallback.GetVariablesIfActive (#816). -->
+    <FleansVersion>0.6.0-preview.1</FleansVersion>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
