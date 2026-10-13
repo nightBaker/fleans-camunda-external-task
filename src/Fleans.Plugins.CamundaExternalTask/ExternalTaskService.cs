@@ -62,6 +62,8 @@ public sealed partial class ExternalTaskService(
             AddMilliseconds(timeProvider.GetUtcNow().UtcDateTime, topic.LockDuration, "lockDuration"); // validates the range
         }
 
+        var newestFirst = NewestFirst(request.Sorting);
+
         var timeout = request.AsyncResponseTimeout is > 0
             ? TimeSpan.FromMilliseconds(Math.Min(request.AsyncResponseTimeout.Value, MaxAsyncResponseTimeout.TotalMilliseconds))
             : TimeSpan.Zero;
@@ -70,7 +72,7 @@ public sealed partial class ExternalTaskService(
         while (true)
         {
             var wake = signal.Next; // before the query, so a task queued during it is not missed
-            var locked = await TryFetchAndLock(workerId, request.MaxTasks, topics, request.UsePriority == true, ct);
+            var locked = await TryFetchAndLock(workerId, request.MaxTasks, topics, request.UsePriority == true, newestFirst, ct);
             var remaining = deadline - timeProvider.GetUtcNow();
             if (locked.Count > 0 || remaining <= TimeSpan.Zero)
                 return locked;
@@ -85,7 +87,7 @@ public sealed partial class ExternalTaskService(
     }
 
     private async Task<List<LockedExternalTaskDto>> TryFetchAndLock(
-        string workerId, int maxTasks, List<FetchExternalTaskTopicDto> topics, bool usePriority, CancellationToken ct)
+        string workerId, int maxTasks, List<FetchExternalTaskTopicDto> topics, bool usePriority, bool newestFirst, CancellationToken ct)
     {
         var result = new List<LockedExternalTaskDto>();
         if (maxTasks == 0 || topics.Count == 0) return result;
@@ -102,19 +104,15 @@ public sealed partial class ExternalTaskService(
                 var candidates = new List<(ExternalTaskEntity Task, FetchExternalTaskTopicDto Topic)>();
                 foreach (var topic in topics)
                 {
-                    var available = Available(db, topic, now, skipped);
-                    var ordered = usePriority
-                        ? available.OrderByDescending(t => t.Priority).ThenBy(t => t.CreateTime)
-                        : available.OrderBy(t => t.CreateTime);
-                    var rows = await ordered.Take(want).ToListAsync(ct);
+                    var rows = await Order(Available(db, topic, now, skipped), usePriority, newestFirst)
+                        .Take(want).ToListAsync(ct);
                     candidates.AddRange(rows.Select(r => (r, topic)));
                 }
                 if (candidates.Count == 0) break;
 
-                // Same order across topics: highest priority first with usePriority, then oldest first.
-                var batch = (usePriority
-                        ? candidates.OrderByDescending(c => c.Task.Priority).ThenBy(c => c.Task.CreateTime)
-                        : candidates.OrderBy(c => c.Task.CreateTime))
+                // Same order across topics as within one.
+                var order = Order(candidates.Select(c => c.Task).AsQueryable(), usePriority, newestFirst).ToList();
+                var batch = candidates.OrderBy(c => order.IndexOf(c.Task))
                     .DistinctBy(c => c.Task.Id)
                     .Take(want);
                 foreach (var (candidate, topic) in batch)
@@ -135,6 +133,39 @@ public sealed partial class ExternalTaskService(
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Highest priority first with <c>usePriority</c>; then by creation time — oldest first unless
+    /// the worker sorts by <c>createTime desc</c>.
+    /// </summary>
+    private static IOrderedQueryable<ExternalTaskEntity> Order(
+        IQueryable<ExternalTaskEntity> tasks, bool usePriority, bool newestFirst)
+    {
+        if (usePriority)
+        {
+            var byPriority = tasks.OrderByDescending(t => t.Priority);
+            return newestFirst ? byPriority.ThenByDescending(t => t.CreateTime) : byPriority.ThenBy(t => t.CreateTime);
+        }
+        return newestFirst ? tasks.OrderByDescending(t => t.CreateTime) : tasks.OrderBy(t => t.CreateTime);
+    }
+
+    /// <summary>Validates Camunda's <c>sorting</c>; true for <c>createTime desc</c>.</summary>
+    private static bool NewestFirst(List<SortingDto>? sorting)
+    {
+        var newestFirst = false;
+        foreach (var sort in sorting ?? [])
+        {
+            if (sort.SortBy != "createTime")
+                throw BadRequest($"Cannot sort by '{sort.SortBy}': only 'createTime' is supported.");
+            newestFirst = sort.SortOrder switch
+            {
+                "asc" or null => false,
+                "desc" => true,
+                _ => throw BadRequest($"sortOrder must be 'asc' or 'desc', not '{sort.SortOrder}'."),
+            };
+        }
+        return newestFirst;
     }
 
     /// <summary>Fetchable rows of one topic, with the topic's process filters applied in SQL.</summary>

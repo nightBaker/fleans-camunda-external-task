@@ -164,7 +164,7 @@ These are the endpoints the official Java and JS external-task clients call:
 
 | Endpoint | Notes |
 |---|---|
-| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
+| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `sorting` (`createTime` `asc`/`desc`; oldest first by default), `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
 | `POST /external-task/{id}/complete` | `variables` go to the workflow scope. `localVariables` are visible only to output mappings. |
 | `POST /external-task/{id}/failure` | `retries > 0`: the task is fetchable again after `retryTimeout`. `retries = 0`: the activity fails. |
 | `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. |

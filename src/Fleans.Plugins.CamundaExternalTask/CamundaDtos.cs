@@ -13,7 +13,11 @@ public sealed record FetchExternalTasksDto(
     int MaxTasks,
     long? AsyncResponseTimeout,
     List<FetchExternalTaskTopicDto>? Topics,
-    bool? UsePriority = null);
+    bool? UsePriority = null,
+    List<SortingDto>? Sorting = null);
+
+/// <summary><c>fetchAndLock</c> sorting (Camunda 7.21+). Only <c>createTime</c> exists.</summary>
+public sealed record SortingDto(string? SortBy, string? SortOrder);
 
 /// <summary>A missing <c>priority</c> is 0, as in Camunda's DTO.</summary>
 public sealed record PriorityDto(long Priority);
