@@ -189,6 +189,17 @@ To build against an unreleased Fleans, pack `Fleans.Domain.Abstractions`,
 `-p:RestoreAdditionalProjectSources=<feed>`, using a separate `NUGET_PACKAGES` folder so the
 stand-in packages don't shadow the published ones later.
 
+## Releasing
+
+Push a tag `v<version>` that matches `VersionPrefix`/`VersionSuffix` in `Directory.Build.props`.
+`release.yml` runs the tests, then publishes the NuGet package and the
+`ghcr.io/nightbaker/fleans-camunda-external-task` image.
+
+NuGet uses [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing),
+so there is no API key secret. On nuget.org, the `nightBaker` account needs a Trusted Publishing
+policy with Repository Owner `nightBaker`, Repository `fleans-camunda-external-task` and
+Workflow File `release.yml`.
+
 ## License
 
 [PolyForm Internal Use License 1.0.0](LICENSE), the same as Fleans.
