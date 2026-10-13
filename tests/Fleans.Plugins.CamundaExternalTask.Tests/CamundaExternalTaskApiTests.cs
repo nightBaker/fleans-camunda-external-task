@@ -747,8 +747,8 @@ public class CamundaExternalTaskApiTests
         // Arrange — a literal and an expression, as camunda:properties would carry.
         await Seed("charge-card", inputs:
         [
-            new InputMapping("eu-west", "extensionProperties.region"),
-            new InputMapping("=amount", "extensionProperties.limit"),
+            new InputMapping("eu-west", "extensionProperty_region"),
+            new InputMapping("=amount", "extensionProperty_limit"),
             new InputMapping("=customer", "who"),
         ]);
 
