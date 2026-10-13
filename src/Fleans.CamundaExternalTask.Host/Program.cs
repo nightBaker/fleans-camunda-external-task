@@ -86,6 +86,16 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 app.MapHealthChecks("/health");
-// Anonymous: put the host behind your gateway, or fork and add authentication + .RequireAuthorization().
-app.MapCamundaExternalTaskApi();
+// Anonymous unless CamundaExternalTasks:BasicAuth:Username and :Password are both set.
+// For anything richer, fork and add ASP.NET authentication + .RequireAuthorization().
+var api = app.MapCamundaExternalTaskApi();
+var basicAuthUser = app.Configuration["CamundaExternalTasks:BasicAuth:Username"];
+var basicAuthPassword = app.Configuration["CamundaExternalTasks:BasicAuth:Password"];
+if (!string.IsNullOrEmpty(basicAuthUser) || !string.IsNullOrEmpty(basicAuthPassword))
+{
+    if (string.IsNullOrEmpty(basicAuthUser) || string.IsNullOrEmpty(basicAuthPassword))
+        throw new InvalidOperationException(
+            "Set both CamundaExternalTasks:BasicAuth:Username and CamundaExternalTasks:BasicAuth:Password, or neither.");
+    api.RequireBasicAuthentication(basicAuthUser, basicAuthPassword);
+}
 app.Run();
