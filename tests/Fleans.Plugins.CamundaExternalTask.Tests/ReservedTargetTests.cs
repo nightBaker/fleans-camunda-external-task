@@ -12,6 +12,8 @@ public class ReservedTargetTests
     public void Reserved_targets_pass_the_engine_deploy_time_validation()
     {
         Assert.MatchesRegex(EngineTarget, ExternalTaskPriority.InputTarget);
+        Assert.MatchesRegex(EngineTarget, ReservedInputs.BusinessKey);
+        Assert.MatchesRegex(EngineTarget, ReservedInputs.TenantId);
         Assert.MatchesRegex(EngineTarget, ExternalTaskService.ExtensionPropertyPrefix + "region");
     }
 }

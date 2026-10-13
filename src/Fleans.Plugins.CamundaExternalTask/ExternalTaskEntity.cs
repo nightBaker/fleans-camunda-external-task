@@ -27,6 +27,12 @@ public sealed class ExternalTaskEntity
     /// <summary>Higher is fetched first when a worker asks for <c>usePriority</c>. See <see cref="ExternalTaskPriority"/>.</summary>
     public long Priority { get; set; }
 
+    /// <summary>From the reserved <c>businessKey</c> input, evaluated when the task is queued.</summary>
+    public string? BusinessKey { get; set; }
+
+    /// <summary>From the reserved <c>tenantId</c> input, evaluated when the task is queued.</summary>
+    public string? TenantId { get; set; }
+
     public string? WorkerId { get; set; }
 
     /// <summary>UTC. Fetchable when null or in the past.</summary>

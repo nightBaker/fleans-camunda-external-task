@@ -93,10 +93,22 @@ as strings (`region`, `limit`). Fleans only accepts identifiers as input targets
 (`^[a-zA-Z_][a-zA-Z0-9_]*$`), so property names with `-` or `.` must be renamed. They are evaluated at fetch time, are not sent as variables,
 and are left out when the source gives `null`.
 
-**Upgrading from 0.6.0:** `taskPriority` and targets starting with `extensionProperty_` were
-ordinary inputs before. If a process already maps a worker variable to such a name, rename
-the target. The
-`Priority` column is added to the existing table at startup.
+### Business key and tenant id
+
+Fleans has neither, so they come from reserved inputs, evaluated when the task is queued:
+
+```xml
+<zeebe:input source="=order.id" target="businessKey" />
+<zeebe:input source="acme" target="tenantId" />
+```
+
+Tasks return them as `businessKey` and `tenantId`. Fetch topics can filter on `businessKey`,
+`tenantIdIn` and `withoutTenantId` (`tenantIdIn` plus `withoutTenantId` matches either).
+They are not sent as variables.
+
+**Upgrading from 0.6.0:** `taskPriority`, `businessKey`, `tenantId` and targets starting with
+`extensionProperty_` were ordinary inputs before. If a process already maps a worker variable
+to such a name, rename the target. The new columns are added to the existing table at startup.
 
 ## 2. Run the plugin host
 
@@ -181,7 +193,7 @@ These are the endpoints the official Java and JS external-task clients call:
 
 | Endpoint | Notes |
 |---|---|
-| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `sorting` (`createTime` `asc`/`desc`; oldest first by default), `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `includeExtensionProperties`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
+| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `sorting` (`createTime` `asc`/`desc`; oldest first by default), `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `includeExtensionProperties`, `processDefinitionId(In)`, `processDefinitionKey(In)`, `businessKey`, `tenantIdIn`, `withoutTenantId`. |
 | `POST /external-task/{id}/complete` | `variables` go to the workflow scope. `localVariables` are visible only to output mappings. |
 | `POST /external-task/{id}/failure` | `retries > 0`: the task is fetchable again after `retryTimeout`. `retries = 0`: the activity fails. |
 | `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. |
@@ -207,8 +219,9 @@ the bare `application/json` content type, the only one the JS client parses.
   and Java-serialized objects are rejected with `400`.
 - **Identifiers:** task `id`, `executionId` and `activityInstanceId` are the Fleans activity
   instance id. `processInstanceId` is the workflow instance id, and `processDefinitionKey` is the
-  process id. `businessKey`, `tenantId` and `processDefinitionVersionTag` are always `null`, and
-  fetch filters on them are ignored.
+  process id. `businessKey` and `tenantId` come from reserved inputs (see
+  [Business key and tenant id](#business-key-and-tenant-id)). `processDefinitionVersionTag` is
+  always `null`, and the fetch filter on it is ignored.
 - **Stale tasks:** a task whose activity ended without a worker (cancelled, or interrupted by a
   boundary event) is removed the next time a worker fetches from its topic.
 - **Scope:** the worker-facing endpoints above, plus `PUT /priority`. The other operator

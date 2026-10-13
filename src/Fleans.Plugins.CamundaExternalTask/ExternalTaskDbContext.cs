@@ -23,6 +23,8 @@ public sealed class ExternalTaskDbContext(DbContextOptions<ExternalTaskDbContext
         task.Property(t => t.ProcessDefinitionId).HasMaxLength(256);
         task.Property(t => t.ActivityId).HasMaxLength(256);
         task.Property(t => t.WorkerId).HasMaxLength(256);
+        task.Property(t => t.BusinessKey).HasMaxLength(256);
+        task.Property(t => t.TenantId).HasMaxLength(256);
         task.HasIndex(t => new { t.TopicName, t.LockExpirationTime });
         task.HasIndex(t => t.WorkflowInstanceId);
     }
