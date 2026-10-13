@@ -79,17 +79,18 @@ get the highest priority first, then the oldest. The Java and JS clients send th
 
 ### Extension properties
 
-Camunda's `<camunda:properties>` become inputs whose target starts with `extensionProperties.`:
+Camunda's `<camunda:properties>` become inputs whose target starts with `extensionProperty_`:
 
 ```xml
 <zeebe:ioMapping>
-  <zeebe:input source="eu-west" target="extensionProperties.region" />
-  <zeebe:input source="=order.limit" target="extensionProperties.limit" />
+  <zeebe:input source="eu-west" target="extensionProperty_region" />
+  <zeebe:input source="=order.limit" target="extensionProperty_limit" />
 </zeebe:ioMapping>
 ```
 
 Workers that fetch with `includeExtensionProperties: true` get them in `extensionProperties`
-as strings (`region`, `limit`). They are evaluated at fetch time, are not sent as variables,
+as strings (`region`, `limit`). Fleans only accepts identifiers as input targets
+(`^[a-zA-Z_][a-zA-Z0-9_]*$`), so property names with `-` or `.` must be renamed. They are evaluated at fetch time, are not sent as variables,
 and are left out when the source gives `null`.
 
 ### Business key and tenant id
@@ -106,9 +107,8 @@ Tasks return them as `businessKey` and `tenantId`. Fetch topics can filter on `b
 They are not sent as variables.
 
 **Upgrading from 0.6.0:** `taskPriority`, `businessKey`, `tenantId` and targets starting with
-`extensionProperties.` were ordinary inputs before. If a process already maps a worker variable to such a name, rename
-the target. The new
-columns are added to the existing table at startup.
+`extensionProperty_` were ordinary inputs before. If a process already maps a worker variable
+to such a name, rename the target. The new columns are added to the existing table at startup.
 
 ## 2. Run the plugin host
 

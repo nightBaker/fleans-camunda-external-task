@@ -45,10 +45,10 @@ public sealed partial class ExternalTaskService(
 
     /// <summary>
     /// Input-mapping target prefix for Camunda's <c>camunda:properties</c>:
-    /// <c>target="extensionProperties.region"</c> is returned as extension property <c>region</c>
+    /// <c>target="extensionProperty_region"</c> is returned as extension property <c>region</c>
     /// to workers that fetch with <c>includeExtensionProperties</c>, and is not a variable.
     /// </summary>
-    public const string ExtensionPropertyPrefix = "extensionProperties.";
+    public const string ExtensionPropertyPrefix = "extensionProperty_";
 
     /// <summary>Error code a Fleans error boundary sees when a worker exhausts its retries.</summary>
     public const string RetriesExhaustedErrorCode = "500";
