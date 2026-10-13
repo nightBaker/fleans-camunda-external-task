@@ -6,6 +6,9 @@ queued in the plugin's own `camunda_external_tasks` table and served through the
 `extendLock`, `lock`, `unlock`, `retries`, `priority`, queries). Existing Camunda external-task
 workers keep working with only their base URL changed. The engine has no Camunda-specific code.
 
+**For migration only:** this is a backward-compatibility bridge for existing Camunda 7 workers.
+For new tasks, use a native [Fleans custom-task plugin](https://nightbaker.github.io/fleans/guides/writing-custom-tasks/).
+
 ## Minimum consumer usage
 
 In a plugin host (`Fleans:Role=Plugin`) `Program.cs`:

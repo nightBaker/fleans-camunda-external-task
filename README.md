@@ -6,6 +6,13 @@ on top of Fleans, so existing workers usually need only a new base URL. That cov
 [`camunda-external-task-client-js`](https://github.com/camunda/camunda-external-task-client-js),
 the Java `camunda-external-task-client`, and hand-written HTTP clients.
 
+> **For migration only.** This plugin is a backward-compatibility bridge for existing Camunda 7
+> workers. For new tasks, and whenever a worker gets rewritten anyway, use a native
+> [Fleans custom-task plugin](https://nightbaker.github.io/fleans/guides/writing-custom-tasks/).
+> Native plugins run inside the Fleans cluster with no polling, locks or extra database. They get
+> typed input/output mappings, appear in the plugin catalog and editor, and support the full Fleans
+> feature set rather than the Camunda subset described below.
+
 The Fleans engine has no Camunda-specific code. The plugin is a regular Fleans custom-task
 plugin that runs in its own silo:
 
