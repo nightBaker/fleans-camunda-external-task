@@ -82,3 +82,44 @@ public sealed record LockedExternalTaskDto(
     string? BusinessKey,
     Dictionary<string, VariableValueDto> Variables,
     Dictionary<string, string> ExtensionProperties);
+
+public sealed record RetriesDto(int? Retries);
+
+public sealed record CountResultDto(long Count);
+
+/// <summary>Query string of <c>GET /external-task</c> and <c>/count</c>; unknown parameters are ignored.</summary>
+public sealed record ExternalTaskQueryDto(
+    string? ExternalTaskId = null,
+    string? TopicName = null,
+    string? WorkerId = null,
+    bool? Locked = null,
+    bool? NotLocked = null,
+    bool? WithRetriesLeft = null,
+    bool? NoRetriesLeft = null,
+    string? ActivityId = null,
+    string? ProcessInstanceId = null,
+    string? ProcessDefinitionId = null,
+    string? TenantIdIn = null,
+    int? FirstResult = null,
+    int? MaxResults = null);
+
+/// <summary>Element of <c>GET /external-task</c>, and the body of <c>GET /external-task/{id}</c>.</summary>
+public sealed record ExternalTaskDto(
+    string Id,
+    string TopicName,
+    string? WorkerId,
+    string? LockExpirationTime,
+    string? CreateTime,
+    string ActivityId,
+    string ActivityInstanceId,
+    string ExecutionId,
+    string ProcessInstanceId,
+    string? ProcessDefinitionId,
+    string ProcessDefinitionKey,
+    string? ProcessDefinitionVersionTag,
+    int? Retries,
+    string? ErrorMessage,
+    bool Suspended,
+    string? TenantId,
+    long Priority,
+    string? BusinessKey);

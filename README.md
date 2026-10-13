@@ -191,6 +191,7 @@ name, it fails with `network fleans_default declared as external, but could not 
 | `Orleans__ClusterId`, `Orleans__ServiceId` | *required* | The engine's cluster ids. |
 | `ConnectionStrings__camunda-external-tasks` | *required* | Database for the `camunda_external_tasks` table. The database and table are created at startup. |
 | `CamundaExternalTasks__Provider` | `Postgres` | `Postgres` or `Sqlite`. Use PostgreSQL with more than one replica. |
+| `CamundaExternalTasks__Incidents` | `false` | `true`: a `failure` with `retries = 0` becomes an incident, as in Camunda (see below). `false`: the activity fails with error code `500`. |
 | `CamundaExternalTasks__BasicAuth__Username`, `CamundaExternalTasks__BasicAuth__Password` | *unset* | Set both to require HTTP basic authentication, as Camunda's `ProcessEngineAuthenticationFilter` does. Setting only one fails startup. |
 | `Fleans__Streaming__Redis__TotalQueueCount` | `8` | The same setting the engine reads. Set it to the same value as the engine, or stream events land on queues this host doesn't read. |
 
@@ -242,6 +243,9 @@ These are the endpoints the official Java and JS external-task clients call:
 | `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. |
 | `POST /external-task/{id}/extendLock`, `/lock`, `/unlock` | Same semantics as Camunda. |
 | `GET /execution/{id}/localVariables/{name}/data` | Content of a `File` (or `Bytes`) variable. The Java and JS clients call it to load file variables. `{id}` is the task id. |
+| `GET /external-task`, `GET /external-task/count` | Operator queries. Filters: `externalTaskId`, `topicName`, `workerId`, `locked`, `notLocked`, `withRetriesLeft`, `noRetriesLeft`, `activityId`, `processInstanceId`, `processDefinitionId`, `tenantIdIn`, plus `firstResult` and `maxResults`. Oldest first. |
+| `GET /external-task/{id}`, `/{id}/errorDetails`, `GET /external-task/topic-names` | Same shapes as Camunda. `suspended` is always `false`. |
+| `PUT /external-task/{id}/retries` | `> 0` resolves an incident, and the task can be fetched again. `0` creates an incident, or fails the activity when incidents are off. |
 | `PUT /external-task/{id}/priority` | Operator override of the priority from the BPMN. Takes effect on the next fetch. |
 
 Errors use Camunda's `{ "type", "message" }` body and status codes:
@@ -252,9 +256,13 @@ the bare `application/json` content type, the only one the JS client parses.
 
 ## Differences from Camunda 7
 
-- **No incidents.** `failure` with `retries = 0` fails the activity, with error code `500` and
-  the worker's `errorMessage` plus `errorDetails`. The failure is visible in Fleans, and an error
-  boundary event can catch it.
+- **Incidents are opt-in.** By default, `failure` with `retries = 0` fails the activity with
+  error code `500` and the worker's `errorMessage` plus `errorDetails`. The failure is visible in
+  Fleans, and an error boundary event can catch it. With `CamundaExternalTasks__Incidents=true`
+  it behaves like Camunda: the task stays as an incident and the activity keeps waiting. Find
+  incidents with `GET /external-task?noRetriesLeft=true` and resolve them with
+  `PUT /external-task/{id}/retries`. Incidents do not show in the Fleans UI. An incident whose
+  workflow was cancelled stays listed until its retries are set. The next fetch then removes it.
 - **`bpmnError` variables are ignored** (a warning is logged).
 - **Variable types:** `String`, `Boolean`, `Integer`, `Short`, `Long`, `Double`, `Date` (kept as a
   string), `Null`, `Json`, `Bytes`, `File`, and `Object` with `serializationDataFormat: application/json`.
@@ -272,10 +280,7 @@ the bare `application/json` content type, the only one the JS client parses.
   always `null`, and the fetch filter on it is ignored.
 - **Stale tasks:** a task whose activity ended without a worker (cancelled, or interrupted by a
   boundary event) is removed the next time a worker fetches from its topic.
-- **Scope:** the worker-facing endpoints above, plus `PUT /priority`. The other operator
-  endpoints (`GET /external-task`, `/count`, `/topic-names`, `PUT /retries`) are not provided.
-  They are tracked in
-  [issue #1](https://github.com/nightBaker/fleans-camunda-external-task/issues/1). Start processes
+- **Scope:** the external-task endpoints above. Start processes
   and correlate messages through the [Fleans REST API](https://nightbaker.github.io/fleans/reference/api/).
 - **Rejected results:** if the engine refuses a `complete` outright (for example, outputs it cannot
   store), the activity is failed and the worker gets `400`. This is the same rule Fleans applies to
@@ -286,7 +291,7 @@ the bare `application/json` content type, the only one the JS client parses.
 - **Long polling** wakes up immediately when a task becomes available on the same replica. Tasks
   that appear on another replica are found by a re-check every 2 seconds.
 
-Logs use EventIds 9350–9369: 9350 queued, 9356 invalid task priority, 9357 priority changed, 9360 locked, 9361 completed, 9362 failure with
+Logs use EventIds 9350–9369: 9350 queued, 9356 invalid task priority, 9357 priority changed, 9358 incident created, 9359 retries set, 9360 locked, 9361 completed, 9362 failure with
 retries left, 9363 retries exhausted, 9364 BPMN error, 9365 stale task removed, 9367 task could
 not be handed out, 9368 result rejected by the workflow.
 

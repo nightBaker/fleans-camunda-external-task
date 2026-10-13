@@ -864,6 +864,121 @@ public class CamundaExternalTaskApiTests
         await AssertError(missing, HttpStatusCode.NotFound, "InvalidRequestException");
     }
 
+    [TestMethod]
+    public async Task With_incidents_a_failure_without_retries_parks_the_task_until_retries_are_set()
+    {
+        // Arrange
+        EnableIncidents();
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+
+        // Act
+        var failure = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/failure", new
+        {
+            workerId = "w1", errorMessage = "card declined", errorDetails = "stack…", retries = 0, retryTimeout = 0,
+        });
+        var whileIncident = await Fetch("w2", "charge-card");
+        var incidents = await GetJson("/engine-rest/external-task?noRetriesLeft=true");
+        var details = await _http.GetStringAsync($"/engine-rest/external-task/{task.Id}/errorDetails");
+        var resolve = await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/retries", new { retries = 2 });
+        var afterResolve = await Fetch("w2", "charge-card");
+
+        // Assert
+        Assert.AreEqual(HttpStatusCode.NoContent, failure.StatusCode);
+        await _callback.DidNotReceive().FailActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<Exception>());
+        Assert.HasCount(0, whileIncident, "An incident is not fetchable.");
+        Assert.HasCount(1, incidents.AsArray());
+        Assert.AreEqual(0, (int)incidents[0]!["retries"]!);
+        Assert.AreEqual("card declined", (string?)incidents[0]!["errorMessage"]);
+        Assert.AreEqual("stack…", details);
+        Assert.AreEqual(HttpStatusCode.NoContent, resolve.StatusCode);
+        Assert.HasCount(1, afterResolve);
+        Assert.AreEqual(2, (int)afterResolve[0]!["retries"]!);
+    }
+
+    [TestMethod]
+    public async Task Without_incidents_setting_retries_to_zero_fails_the_activity()
+    {
+        // Arrange
+        var task = await Seed("charge-card");
+
+        // Act
+        var response = await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/retries", new { retries = 0 });
+
+        // Assert
+        Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
+        await _callback.Received(1).FailActivity("ct1", task.ActivityInstanceId,
+            Arg.Is<ActivityException>(e => e.GetActivityErrorState().Code == ExternalTaskService.RetriesExhaustedErrorCode));
+        Assert.IsNull(await Row(task.Id));
+    }
+
+    [TestMethod]
+    public async Task With_incidents_setting_retries_to_zero_creates_an_incident()
+    {
+        EnableIncidents();
+        var task = await Seed("charge-card");
+
+        var response = await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/retries", new { retries = 0 });
+
+        Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.AreEqual(0, (await Row(task.Id))!.Retries);
+        Assert.HasCount(0, await Fetch("w1", "charge-card"));
+        await _callback.DidNotReceive().FailActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<Exception>());
+    }
+
+    [TestMethod]
+    public async Task Query_api_lists_counts_and_gets_tasks()
+    {
+        // Arrange
+        var card = await Seed("charge-card", priority: 4, businessKey: "order-1");
+        await Seed("charge-card");
+        var fraud = await Seed("check-fraud");
+        await Fetch("w1", "check-fraud");
+
+        // Act
+        var all = await GetJson("/engine-rest/external-task");
+        var page = await GetJson("/engine-rest/external-task?topicName=charge-card&firstResult=0&maxResults=1");
+        var locked = await GetJson("/engine-rest/external-task?locked=true");
+        var byInstance = await GetJson($"/engine-rest/external-task?processInstanceId={card.WorkflowInstanceId}");
+        var count = await GetJson("/engine-rest/external-task/count?topicName=charge-card");
+        var single = await GetJson($"/engine-rest/external-task/{card.Id}");
+        var topics = await GetJson("/engine-rest/external-task/topic-names?withUnlockedTasks=true");
+        var missing = await _http.GetAsync($"/engine-rest/external-task/{Guid.NewGuid()}");
+
+        // Assert
+        Assert.HasCount(3, all.AsArray());
+        CollectionAssert.AreEqual(new[] { card.Id }, Ids(page.AsArray()));
+        CollectionAssert.AreEqual(new[] { fraud.Id }, Ids(locked.AsArray()));
+        Assert.AreEqual("w1", (string?)locked[0]!["workerId"]);
+        CollectionAssert.AreEqual(new[] { card.Id }, Ids(byInstance.AsArray()));
+        Assert.AreEqual(2L, (long)count["count"]!);
+        Assert.AreEqual("order-1", (string?)single["businessKey"]);
+        Assert.AreEqual(4L, (long)single["priority"]!);
+        Assert.IsFalse((bool)single["suspended"]!);
+        CollectionAssert.AreEqual(new[] { "charge-card" }, topics.AsArray().Select(n => (string)n!).ToArray());
+        await AssertError(missing, HttpStatusCode.NotFound, "InvalidRequestException");
+    }
+
+    [TestMethod]
+    public async Task Negative_retries_are_a_bad_request()
+    {
+        var task = await Seed("charge-card");
+
+        var response = await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/retries", new { retries = -1 });
+
+        await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
+    }
+
+    private void EnableIncidents() =>
+        _app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<CamundaExternalTaskOptions>>().Value.Incidents = true;
+
+    private async Task<JsonNode> GetJson(string url)
+    {
+        var response = await _http.GetAsync(url);
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, await response.Content.ReadAsStringAsync());
+        return JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+    }
+
     /// <summary>Fetches with the given topic filters, then unlocks what it got.</summary>
     private async Task<JsonArray> FetchFiltered(object filters)
     {

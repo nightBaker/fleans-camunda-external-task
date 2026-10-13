@@ -80,7 +80,7 @@ builder.Services.AddCamundaExternalTasks(options =>
     else
         throw new InvalidOperationException(
             $"CamundaExternalTasks:Provider must be 'Postgres' or 'Sqlite' (got '{provider}').");
-});
+}, options => options.Incidents = builder.Configuration.GetValue("CamundaExternalTasks:Incidents", false));
 
 builder.Services.AddHealthChecks();
 
