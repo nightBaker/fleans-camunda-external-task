@@ -21,6 +21,7 @@ public static class CamundaExternalTaskServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configureDb);
         services.AddDbContextFactory<ExternalTaskDbContext>(configureDb);
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<ExternalTaskSignal>();
         services.TryAddSingleton<ExternalTaskService>();
         services.AddHostedService<ExternalTaskSchemaInitializer>();
         return services;

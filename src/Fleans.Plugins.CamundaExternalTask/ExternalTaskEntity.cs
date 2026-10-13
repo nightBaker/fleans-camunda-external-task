@@ -29,6 +29,13 @@ public sealed class ExternalTaskEntity
     /// <summary>UTC. Fetchable when null or in the past.</summary>
     public DateTime? LockExpirationTime { get; set; }
 
+    /// <summary>
+    /// UTC. Set while a worker's result (complete / failure / BPMN error) or an operator's
+    /// <c>retries=0</c> is being written into the workflow; every other state change waits until
+    /// it is cleared or has passed, so a report cannot race an unlock, a lock or a second report.
+    /// </summary>
+    public DateTime? ReportingUntil { get; set; }
+
     /// <summary>Null until a worker reports a failure (Camunda semantics).</summary>
     public int? Retries { get; set; }
 

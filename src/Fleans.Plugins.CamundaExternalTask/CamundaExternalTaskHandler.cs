@@ -27,6 +27,7 @@ namespace Fleans.Plugins.CamundaExternalTask;
 [RegexImplicitStreamSubscription(CamundaExternalTaskConventions.StreamNamespacePattern)]
 public sealed partial class CamundaExternalTaskHandler(
     IDbContextFactory<ExternalTaskDbContext> dbFactory,
+    ExternalTaskSignal signal,
     TimeProvider timeProvider,
     ILogger<CamundaExternalTaskHandler> logger)
     : Grain, IGrainWithStringKey, IAsyncObserver<ExecuteCustomTaskEvent>, IStreamSubscriptionObserver
@@ -100,6 +101,7 @@ public sealed partial class CamundaExternalTaskHandler(
         }
 
         LogQueued(topic, item.ActivityId, id);
+        signal.Pulse(); // wake long-polling fetchAndLock requests in this process
     }
 
     public Task OnCompletedAsync() => Task.CompletedTask;

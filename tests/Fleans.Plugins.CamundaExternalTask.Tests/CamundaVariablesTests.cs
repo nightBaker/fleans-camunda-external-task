@@ -55,6 +55,14 @@ public class CamundaVariablesTests
     }
 
     [TestMethod]
+    public void FormatDate_converts_local_times_to_utc()
+    {
+        var utc = new DateTime(2026, 3, 4, 5, 6, 7, 89, DateTimeKind.Utc);
+
+        Assert.AreEqual(CamundaVariables.FormatDate(utc), CamundaVariables.FormatDate(utc.ToLocalTime()));
+    }
+
+    [TestMethod]
     public void FormatDate_uses_the_camunda_rest_format() =>
         Assert.AreEqual("2026-03-04T05:06:07.089+0000",
             CamundaVariables.FormatDate(new DateTime(2026, 3, 4, 5, 6, 7, 89, DateTimeKind.Utc)));

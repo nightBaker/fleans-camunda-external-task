@@ -381,6 +381,195 @@ public class CamundaExternalTaskApiTests
     }
 
     [TestMethod]
+    public async Task Unlock_and_retries_wait_while_a_result_is_being_reported()
+    {
+        // Arrange — w1's complete is in flight inside the engine.
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+        var engineGate = new TaskCompletionSource();
+        var entered = new TaskCompletionSource();
+        _callback.CompleteActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<ExpandoObject>())
+            .Returns(async _ => { entered.TrySetResult(); await engineGate.Task; });
+        var complete = _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/complete", new { workerId = "w1" });
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Act
+        var unlock = await _http.PostAsync($"/engine-rest/external-task/{task.Id}/unlock", null);
+        var retries = await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/retries", new { retries = 0 });
+        var fetchedByOther = await Fetch("w2", "charge-card");
+        engineGate.SetResult();
+        var completed = await complete;
+
+        // Assert — nothing interfered with the report, and the workflow saw exactly one outcome.
+        await AssertError(unlock, HttpStatusCode.InternalServerError, "BadUserRequestException");
+        await AssertError(retries, HttpStatusCode.InternalServerError, "BadUserRequestException");
+        Assert.HasCount(0, fetchedByOther);
+        Assert.AreEqual(HttpStatusCode.NoContent, completed.StatusCode);
+        await _callback.DidNotReceive().FailActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<Exception>());
+    }
+
+    [TestMethod]
+    public async Task A_task_that_cannot_be_handed_out_does_not_break_the_fetch()
+    {
+        // Arrange — engine unreachable for one task; another one fails deterministically and the
+        // attempt to fail its activity fails too.
+        var transient = await Seed("charge-card");
+        var poison = await Seed("charge-card");
+        var healthy = await Seed("charge-card");
+        _callback.GetVariablesIfActive(transient.ActivityInstanceId, Arg.Any<Guid>())
+            .Returns<ValueTask<ExpandoObject?>>(_ => throw new TimeoutException("engine busy"));
+        _callback.GetVariablesIfActive(poison.ActivityInstanceId, Arg.Any<Guid>())
+            .Returns<ValueTask<ExpandoObject?>>(_ => throw new InvalidOperationException("unknown scope"));
+        _callback.FailActivity(Arg.Any<string>(), poison.ActivityInstanceId, Arg.Any<Exception>())
+            .Returns<Task>(_ => throw new TimeoutException("engine busy"));
+
+        // Act
+        var tasks = await Fetch("w1", "charge-card");
+        var notLocked = await _http.GetFromJsonAsync<JsonArray>("/engine-rest/external-task?notLocked=true");
+
+        // Assert — the healthy task is served; the other two are handed back, not left locked.
+        Assert.AreEqual(healthy.Id, (string?)tasks.Single()!["id"]);
+        CollectionAssert.AreEquivalent(new[] { transient.Id, poison.Id },
+            notLocked!.Select(t => (string?)t!["id"]).ToArray());
+    }
+
+    [TestMethod]
+    public async Task Complete_rejected_by_the_engine_fails_the_activity()
+    {
+        // Arrange
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+        _callback.CompleteActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<ExpandoObject>())
+            .Returns<Task>(_ => throw new InvalidOperationException("outputs cannot be stored"));
+
+        // Act
+        var response = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/complete", new { workerId = "w1" });
+
+        // Assert — failed visibly instead of being handed to another worker after the report lock.
+        await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
+        await _callback.Received(1).FailActivity("ct1", task.ActivityInstanceId, Arg.Any<InvalidOperationException>());
+        Assert.AreEqual(HttpStatusCode.NotFound, (await _http.GetAsync($"/engine-rest/external-task/{task.Id}")).StatusCode);
+    }
+
+    [TestMethod]
+    public async Task Complete_that_fails_transiently_can_be_sent_again()
+    {
+        // Arrange
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+        var calls = 0;
+        _callback.CompleteActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<ExpandoObject>())
+            .Returns(_ => ++calls == 1 ? Task.FromException(new TimeoutException("engine busy")) : Task.CompletedTask);
+
+        // Act
+        var first = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/complete", new { workerId = "w1" });
+        var second = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/complete", new { workerId = "w1" });
+
+        // Assert
+        Assert.AreEqual(HttpStatusCode.InternalServerError, first.StatusCode);
+        Assert.AreEqual(HttpStatusCode.NoContent, second.StatusCode);
+        await _callback.DidNotReceive().FailActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<Exception>());
+    }
+
+    [TestMethod]
+    public async Task Complete_for_an_activity_that_already_ended_returns_404()
+    {
+        // Arrange — a boundary timer interrupted the task while the worker was busy.
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+        _processVariables = null;
+
+        // Act
+        var response = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/complete", new { workerId = "w1" });
+
+        // Assert — the worker learns its result was not applied.
+        await AssertError(response, HttpStatusCode.NotFound, "InvalidRequestException");
+        await _callback.DidNotReceive().CompleteActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<ExpandoObject>());
+    }
+
+    [TestMethod]
+    public async Task Lock_and_queries_respect_the_retry_backoff()
+    {
+        // Arrange — failed with retries left; waits 60 s before it may run again.
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+        await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/failure",
+            new { workerId = "w1", errorMessage = "down", retries = 2, retryTimeout = 60_000 });
+
+        // Act
+        var lockByOther = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/lock",
+            new { workerId = "w2", lockDuration = 10_000 });
+        var notLocked = await _http.GetFromJsonAsync<JsonArray>("/engine-rest/external-task?notLocked=true");
+        var locked = await _http.GetFromJsonAsync<JsonArray>("/engine-rest/external-task?locked=true");
+
+        // Assert
+        await AssertError(lockByOther, HttpStatusCode.BadRequest, "InvalidRequestException");
+        Assert.HasCount(0, notLocked!);
+        Assert.HasCount(1, locked!);
+    }
+
+    [TestMethod]
+    public async Task Process_definition_filter_finds_a_match_behind_many_other_tasks()
+    {
+        // Arrange — the only task of process B is queued behind 30 tasks of process A.
+        for (var i = 0; i < 30; i++) await Seed("charge-card");
+        var wanted = await Seed("charge-card", processDefinitionKey: "process-b");
+
+        // Act
+        var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
+        {
+            workerId = "w1",
+            maxTasks = 1,
+            topics = new[] { new { topicName = "charge-card", lockDuration = 10_000, processDefinitionKey = "process-b" } },
+        });
+
+        // Assert
+        var tasks = JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsArray();
+        Assert.AreEqual(wanted.Id, (string?)tasks.Single()!["id"]);
+    }
+
+    [TestMethod]
+    public async Task Long_poll_wakes_up_as_soon_as_a_task_is_released()
+    {
+        // Arrange — w1 holds the only task; w2 long-polls.
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+        var waiting = _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
+        {
+            workerId = "w2",
+            maxTasks = 1,
+            asyncResponseTimeout = 30_000,
+            topics = new[] { new { topicName = "charge-card", lockDuration = 10_000 } },
+        });
+        await Task.Delay(300);
+
+        // Act
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        await _http.PostAsync($"/engine-rest/external-task/{task.Id}/unlock", null);
+        var response = await waiting;
+
+        // Assert — answered by the wake-up, not by the 2 s fallback poll.
+        var tasks = JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsArray();
+        Assert.AreEqual(task.Id, (string?)tasks.Single()!["id"]);
+        Assert.IsLessThan(1500, stopwatch.ElapsedMilliseconds);
+    }
+
+    [TestMethod]
+    public async Task Out_of_range_number_is_a_bad_request()
+    {
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+
+        var response = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/complete", new
+        {
+            workerId = "w1",
+            variables = new { n = new { value = "99999999999999999999", type = "Long" } },
+        });
+
+        await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
+    }
+
+    [TestMethod]
     public async Task Schema_initializer_can_run_again_on_an_existing_table()
     {
         // Arrange — the host already created the table at startup; a second replica starts.
@@ -396,7 +585,8 @@ public class CamundaExternalTaskApiTests
     }
 
     private async Task<ExternalTaskEntity> Seed(
-        string topic, List<InputMapping>? inputs = null, List<OutputMapping>? outputs = null)
+        string topic, List<InputMapping>? inputs = null, List<OutputMapping>? outputs = null,
+        string processDefinitionKey = "order-process")
     {
         var activityInstanceId = Guid.NewGuid();
         var entity = new ExternalTaskEntity
@@ -404,7 +594,7 @@ public class CamundaExternalTaskApiTests
             Id = activityInstanceId.ToString("D"),
             TopicName = topic,
             WorkflowInstanceId = Guid.NewGuid(),
-            ProcessDefinitionKey = "order-process",
+            ProcessDefinitionKey = processDefinitionKey,
             ProcessDefinitionId = "order-process:1",
             ActivityId = "ct1",
             ActivityInstanceId = activityInstanceId,

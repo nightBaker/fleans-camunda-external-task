@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Fleans.Plugins.CamundaExternalTask;
 
@@ -8,7 +10,7 @@ namespace Fleans.Plugins.CamundaExternalTask;
 /// Maps the Camunda 7 <c>/external-task</c> REST resource so existing workers (camunda-external-task-client
 /// for Java / JS, or hand-written HTTP clients) only need their base URL changed.
 /// </summary>
-public static class CamundaExternalTaskEndpoints
+public static partial class CamundaExternalTaskEndpoints
 {
     /// <summary>
     /// Maps <c>{basePath}/external-task/*</c>. Returns the route group so the host can add
@@ -28,6 +30,14 @@ public static class CamundaExternalTaskEndpoints
                 catch (ExternalTaskApiException ex)
                 {
                     return Json(new CamundaErrorDto(ex.Type, ex.Message), ex.StatusCode);
+                }
+                catch (Exception ex) when (!context.HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    // Engine or database failure: Camunda clients expect its error body on a 500 too.
+                    var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger(typeof(CamundaExternalTaskEndpoints));
+                    LogUnhandled(logger, ex, context.HttpContext.Request.Path);
+                    return Json(new CamundaErrorDto("ProcessEngineException", ex.Message), StatusCodes.Status500InternalServerError);
                 }
             });
 
@@ -105,6 +115,10 @@ public static class CamundaExternalTaskEndpoints
     /// </summary>
     private static IResult Json(object value, int statusCode = StatusCodes.Status200OK) =>
         Results.Json(value, contentType: "application/json", statusCode: statusCode);
+
+    [LoggerMessage(EventId = 9355, Level = LogLevel.Error,
+        Message = "Camunda external-task request {Path} failed")]
+    private static partial void LogUnhandled(ILogger logger, Exception ex, string path);
 
     /// <summary>Query-string filters of <c>GET /external-task</c> (Camunda parameter names).</summary>
     public sealed class ExternalTaskQueryParameters

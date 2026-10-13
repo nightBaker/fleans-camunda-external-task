@@ -123,8 +123,10 @@ new Client({ baseUrl: "http://camunda-external-task:8080/engine-rest" });
 | `PUT /external-task/{id}/retries`, `/priority` | Setting retries to `0` fails the activity. |
 | `GET /external-task`, `/count`, `/{id}`, `/topic-names` | Filters: `topicName`, `workerId`, `locked`, `notLocked`, `withRetriesLeft`, `noRetriesLeft`, `processInstanceId`, `activityId`, `processDefinitionId`, `processDefinitionKey`, `firstResult`, `maxResults`. |
 
-Errors use Camunda's `{ "type", "message" }` body and status codes: `404` for an unknown task,
-`500` when the task is locked by another worker, and `400` for an invalid request. Responses use
+Errors use Camunda's `{ "type", "message" }` body and status codes:
+- `404` for an unknown task, including a task whose activity already ended, for example cancelled or interrupted by a boundary event. A worker that reports on such a task learns its result was not applied.
+- `500` when the task is locked by another worker or its result is being reported.
+- `400` for an invalid request. Responses use
 the bare `application/json` content type, the only one the JS client parses.
 
 ## Differences from Camunda 7
@@ -146,10 +148,16 @@ the bare `application/json` content type, the only one the JS client parses.
   boundary event) is removed the next time a worker fetches from its topic.
 - **Scope:** only `/external-task`. Start processes and correlate messages through the
   [Fleans REST API](https://nightbaker.github.io/fleans/reference/api/).
+- **Rejected results:** if the engine refuses a `complete` outright (for example, outputs it cannot
+  store), the activity is failed and the worker gets `400`. This is the same rule Fleans applies to
+  its other plugins. A transient engine error returns `500`, and the worker can send `complete` again.
 - **Clocks:** lock expiry uses each replica's clock, so keep replicas NTP-synced.
+- **Long polling** wakes up immediately when a task becomes available on the same replica. Tasks
+  that appear on another replica are found by a re-check every 2 seconds.
 
-Logs use EventIds 9350–9367: 9350 queued, 9360 locked, 9361 completed, 9362 failure with
-retries left, 9363 retries exhausted, 9364 BPMN error, 9365 stale task removed.
+Logs use EventIds 9350–9369: 9350 queued, 9360 locked, 9361 completed, 9362 failure with
+retries left, 9363 retries exhausted, 9364 BPMN error, 9365 stale task removed, 9367 task could
+not be handed out, 9368 result rejected by the workflow.
 
 ## Development
 

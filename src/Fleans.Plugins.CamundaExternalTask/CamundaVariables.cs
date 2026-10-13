@@ -89,9 +89,12 @@ public static class CamundaVariables
         _ => Typed(JsonSerializer.Serialize(ToSerializable(value)), "Json"),
     };
 
-    /// <summary>Camunda's REST date format, <c>yyyy-MM-dd'T'HH:mm:ss.SSSZ</c>, rendered in UTC.</summary>
-    public static string FormatDate(DateTime utc) =>
-        DateTime.SpecifyKind(utc, DateTimeKind.Utc).ToUniversalTime()
+    /// <summary>
+    /// Camunda's REST date format, <c>yyyy-MM-dd'T'HH:mm:ss.SSSZ</c>, rendered in UTC. A Local value
+    /// is converted; an Unspecified one (EF Core reads stored UTC values back that way) is taken as UTC.
+    /// </summary>
+    public static string FormatDate(DateTime value) =>
+        (value.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(value, DateTimeKind.Utc) : value.ToUniversalTime())
             .ToString("yyyy-MM-dd'T'HH:mm:ss.fff", CultureInfo.InvariantCulture) + "+0000";
 
     private static VariableValueDto Typed(object? value, string type) =>
