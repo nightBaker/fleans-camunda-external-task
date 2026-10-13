@@ -434,13 +434,17 @@ public sealed partial class ExternalTaskService(
     {
         if (string.IsNullOrEmpty(request.ErrorCode))
             throw BadRequest("errorCode is required.");
+        var variables = new ExpandoObject();
+        foreach (var (name, value) in ToFleans(request.Variables))
+            ((IDictionary<string, object?>)variables)[name] = value;
         var task = await ClaimForReport(id, RequireWorkerId(request.WorkerId), "reported a BPMN error for");
-        if (request.Variables is { Count: > 0 })
-            LogBpmnErrorVariablesIgnored(id, request.Variables.Count);
 
+        // The variables land in the activity's scope before the error propagates, so the
+        // catching error boundary (or error event sub-process) sees them, as in Camunda.
         await Report(task, failActivityOnRejection: false, () =>
             Callback(task).FailActivity(task.ActivityId, task.ActivityInstanceId,
-                new CustomTaskFailedActivityException(request.ErrorCode, request.ErrorMessage ?? request.ErrorCode)));
+                new CustomTaskFailedActivityException(request.ErrorCode, request.ErrorMessage ?? request.ErrorCode),
+                variables));
         LogBpmnError(id, task.TopicName, request.ErrorCode);
     }
 
@@ -744,7 +748,4 @@ public sealed partial class ExternalTaskService(
         Message = "External task {ExternalTaskId} priority set to {Priority}")]
     private partial void LogPriorityChanged(string externalTaskId, long priority);
 
-    [LoggerMessage(EventId = 9366, Level = LogLevel.Warning,
-        Message = "BPMN error for external task {ExternalTaskId} carried {Count} variable(s); Fleans ignores variables on BPMN errors")]
-    private partial void LogBpmnErrorVariablesIgnored(string externalTaskId, int count);
 }

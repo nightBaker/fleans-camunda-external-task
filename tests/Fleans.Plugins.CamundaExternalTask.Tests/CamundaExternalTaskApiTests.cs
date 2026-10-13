@@ -242,16 +242,49 @@ public class CamundaExternalTaskApiTests
         var task = await Seed("charge-card");
         await Fetch("w1", "charge-card");
 
+        ExpandoObject? reported = null;
+        await _callback.FailActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<Exception>(),
+            Arg.Do<ExpandoObject>(v => reported = v));
+
         // Act
-        var response = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/bpmnError",
-            new { workerId = "w1", errorCode = "DECLINED", errorMessage = "no funds" });
+        var response = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/bpmnError", new
+        {
+            workerId = "w1",
+            errorCode = "DECLINED",
+            errorMessage = "no funds",
+            variables = new Dictionary<string, object> { ["declineReason"] = new { value = "insufficient", type = "String" } },
+        });
 
         // Assert
         Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
         await _callback.Received(1).FailActivity("ct1", task.ActivityInstanceId,
             Arg.Is<Exception>(e => e is ActivityException
                 && ((ActivityException)e).GetActivityErrorState().Code == "DECLINED"
-                && ((ActivityException)e).GetActivityErrorState().Message == "no funds"));
+                && ((ActivityException)e).GetActivityErrorState().Message == "no funds"),
+            Arg.Any<ExpandoObject>());
+        Assert.AreEqual("insufficient", ((IDictionary<string, object?>)reported!)["declineReason"],
+            "bpmnError variables reach the workflow with the failure.");
+    }
+
+    [TestMethod]
+    public async Task BpmnError_with_unsupported_variables_is_a_bad_request_and_keeps_the_task()
+    {
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+
+        var response = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/bpmnError", new
+        {
+            workerId = "w1",
+            errorCode = "DECLINED",
+            variables = new Dictionary<string, object>
+            {
+                ["blob"] = new { value = "rO0AB", type = "Object", valueInfo = new { serializationDataFormat = "application/x-java-serialized-object" } },
+            },
+        });
+
+        await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
+        Assert.IsNotNull(await Row(task.Id));
+        await _callback.DidNotReceive().FailActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<Exception>(), Arg.Any<ExpandoObject>());
     }
 
     [TestMethod]

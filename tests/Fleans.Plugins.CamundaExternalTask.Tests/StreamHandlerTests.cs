@@ -80,9 +80,11 @@ public class StreamHandlerTests
         var task = (await Service.FetchAndLock(Fetch("check-fraud"), default)).Single();
 
         // Act
-        await Service.HandleBpmnError(task.Id, new ExternalTaskBpmnErrorDto("w1", "FRAUD", "fishy", null));
+        await Service.HandleBpmnError(task.Id, new ExternalTaskBpmnErrorDto("w1", "FRAUD", "fishy",
+            new Dictionary<string, VariableValueDto> { ["score"] = new(97, "Integer", null) }));
 
         // Assert
+        Assert.Contains($"fail-vars:{evt.ActivityId}:score=97", FakeWorkflowInstance.Calls);
         Assert.Contains($"fail:{evt.ActivityId}:FRAUD", FakeWorkflowInstance.Calls);
     }
 
@@ -270,6 +272,14 @@ public sealed class FakeWorkflowInstance : Grain, IWorkflowInstanceCallback
         var values = string.Join(",", ((IDictionary<string, object?>)variables).Select(kv => $"{kv.Key}={kv.Value}"));
         Calls.Add($"complete:{activityId}:{values}");
         return Task.CompletedTask;
+    }
+
+    public Task FailActivity(string activityId, Guid activityInstanceId, Exception exception, ExpandoObject variables)
+    {
+        var values = string.Join(",", ((IDictionary<string, object?>)variables).Select(kv => $"{kv.Key}={kv.Value}"));
+        if (values.Length > 0)
+            Calls.Add($"fail-vars:{activityId}:{values}");
+        return FailActivity(activityId, activityInstanceId, exception);
     }
 
     public Task FailActivity(string activityId, Guid activityInstanceId, Exception exception)
