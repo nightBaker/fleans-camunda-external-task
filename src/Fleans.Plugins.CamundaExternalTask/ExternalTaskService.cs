@@ -8,6 +8,7 @@ using Fleans.Domain.Activities;
 using Fleans.Domain.Errors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Orleans.Runtime;
 
 namespace Fleans.Plugins.CamundaExternalTask;
@@ -29,6 +30,7 @@ public sealed partial class ExternalTaskService(
     IGrainFactory grainFactory,
     ExternalTaskSignal signal,
     TimeProvider timeProvider,
+    IOptions<CamundaExternalTaskOptions> options,
     ILogger<ExternalTaskService> logger)
 {
     /// <summary>Camunda's upper bound for <c>asyncResponseTimeout</c>.</summary>
@@ -403,7 +405,10 @@ public sealed partial class ExternalTaskService(
         if (retries == 0)
         {
             var task = await ClaimForReport(id, worker, "failed");
-            await FailRetriesExhausted(task, request.ErrorMessage, request.ErrorDetails);
+            if (options.Value.Incidents)
+                await CreateIncident(task, request.ErrorMessage, request.ErrorDetails);
+            else
+                await FailRetriesExhausted(task, request.ErrorMessage, request.ErrorDetails);
             return;
         }
 
@@ -533,15 +538,17 @@ public sealed partial class ExternalTaskService(
     /// if it ended meanwhile (cancelled, interrupted by a boundary event), the task is gone — 404,
     /// as in Camunda — instead of a success the engine would silently ignore.
     /// </summary>
-    private async Task<ExternalTaskEntity> ClaimForReport(string id, string workerId, string action)
+    /// <param name="workerId">The worker that must hold the lock; null for an operator, who may act on any task.</param>
+    private async Task<ExternalTaskEntity> ClaimForReport(string id, string? workerId, string action)
     {
         var now = UtcNow();
         var until = now + ReportLockDuration;
         await using (var db = await dbFactory.CreateDbContextAsync())
         {
-            var updated = await db.ExternalTasks
-                .Where(t => t.Id == id && t.WorkerId == workerId
-                    && (t.ReportingUntil == null || t.ReportingUntil <= now))
+            var claimable = db.ExternalTasks.Where(t => t.Id == id && (t.ReportingUntil == null || t.ReportingUntil <= now));
+            if (workerId is not null)
+                claimable = claimable.Where(t => t.WorkerId == workerId);
+            var updated = await claimable
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(t => t.ReportingUntil, until)
                     .SetProperty(t => t.LockExpirationTime, until));

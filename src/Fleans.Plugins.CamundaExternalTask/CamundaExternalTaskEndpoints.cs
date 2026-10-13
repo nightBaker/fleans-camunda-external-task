@@ -90,6 +90,28 @@ public static partial class CamundaExternalTaskEndpoints
             return Results.NoContent();
         });
 
+        // Operator API: incidents and queries.
+        group.MapGet("", async ([AsParameters] ExternalTaskQueryDto query, ExternalTaskService service) =>
+            Json(await service.Query(query)));
+
+        group.MapGet("/count", async ([AsParameters] ExternalTaskQueryDto query, ExternalTaskService service) =>
+            Json(await service.Count(query)));
+
+        group.MapGet("/topic-names", async (ExternalTaskService service,
+                bool? withLockedTasks, bool? withUnlockedTasks, bool? withRetriesLeft) =>
+            Json(await service.TopicNames(withLockedTasks == true, withUnlockedTasks == true, withRetriesLeft == true)));
+
+        group.MapGet("/{id}", async (string id, ExternalTaskService service) => Json(await service.Get(id)));
+
+        group.MapGet("/{id}/errorDetails", async (string id, ExternalTaskService service) =>
+            Results.Text(await service.GetErrorDetails(id) ?? "", "text/plain"));
+
+        group.MapPut("/{id}/retries", async (string id, RetriesDto body, ExternalTaskService service) =>
+        {
+            await service.SetRetries(id, body);
+            return Results.NoContent();
+        });
+
         group.MapPut("/{id}/priority", async (string id, PriorityDto body, ExternalTaskService service) =>
         {
             await service.SetPriority(id, body);

@@ -17,10 +17,15 @@ public static class CamundaExternalTaskServiceCollectionExtensions
     /// <see cref="CamundaExternalTaskEndpoints.MapCamundaExternalTaskApi"/>.
     /// </summary>
     /// <param name="configureDb">Provider for the external-task table, e.g. <c>o =&gt; o.UseNpgsql(cs)</c>.</param>
+    /// <param name="configure">Behaviour switches, e.g. <c>o =&gt; o.Incidents = true</c>.</param>
     public static IServiceCollection AddCamundaExternalTasks(
-        this IServiceCollection services, Action<DbContextOptionsBuilder> configureDb)
+        this IServiceCollection services, Action<DbContextOptionsBuilder> configureDb,
+        Action<CamundaExternalTaskOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(configureDb);
+        var options = services.AddOptions<CamundaExternalTaskOptions>();
+        if (configure is not null)
+            options.Configure(configure);
         services.AddDbContextFactory<ExternalTaskDbContext>(configureDb);
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<ExternalTaskSignal>();
