@@ -58,8 +58,18 @@ To build one yourself:
 docker build -t fleans-camunda-external-task .
 ```
 
-Next to the [engine compose bundle](https://nightbaker.github.io/fleans/guides/self-host-docker-compose/),
-add a `docker-compose.override.yaml`:
+With the [engine compose bundle](https://nightbaker.github.io/fleans/guides/self-host-docker-compose/):
+
+Start the engine first. The bundle creates the `fleans_default` network that the plugin host
+joins, and the network only gets that name when the compose project is called `fleans`:
+
+```bash
+cd <unzipped-engine-compose-bundle>
+echo "COMPOSE_PROJECT_NAME=fleans" >> .env   # names the network fleans_default
+docker compose up -d                          # engine first: creates the network
+```
+
+Then add a `docker-compose.override.yaml` next to the bundle's `docker-compose.yaml`:
 
 ```yaml
 services:
@@ -78,6 +88,10 @@ networks:
     external: true
     name: fleans_default
 ```
+
+Then run `docker compose up -d` again from the bundle directory. Compose merges the override and
+starts the plugin host on the existing network. If you skip the engine-first step or the project
+name, it fails with `network fleans_default declared as external, but could not be found`.
 
 | Setting | Default | Meaning |
 |---|---|---|
