@@ -77,8 +77,25 @@ the activity fails with error code `400`. Without the input, the priority is `0`
 only and is not sent to the worker as a variable. Workers that fetch with `usePriority: true`
 get the highest priority first, then the oldest. The Java and JS clients send that by default.
 
-**Upgrading from 0.6.0:** `taskPriority` was an ordinary input before. If a process already
-maps a worker variable to that name, rename the target, or it becomes the priority. The
+### Extension properties
+
+Camunda's `<camunda:properties>` become inputs whose target starts with `extensionProperty_`:
+
+```xml
+<zeebe:ioMapping>
+  <zeebe:input source="eu-west" target="extensionProperty_region" />
+  <zeebe:input source="=order.limit" target="extensionProperty_limit" />
+</zeebe:ioMapping>
+```
+
+Workers that fetch with `includeExtensionProperties: true` get them in `extensionProperties`
+as strings (`region`, `limit`). Fleans only accepts identifiers as input targets
+(`^[a-zA-Z_][a-zA-Z0-9_]*$`), so property names with `-` or `.` must be renamed. They are evaluated at fetch time, are not sent as variables,
+and are left out when the source gives `null`.
+
+**Upgrading from 0.6.0:** `taskPriority` and targets starting with `extensionProperty_` were
+ordinary inputs before. If a process already maps a worker variable to such a name, rename
+the target. The
 `Priority` column is added to the existing table at startup.
 
 ## 2. Run the plugin host
@@ -164,7 +181,7 @@ These are the endpoints the official Java and JS external-task clients call:
 
 | Endpoint | Notes |
 |---|---|
-| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `sorting` (`createTime` `asc`/`desc`; oldest first by default), `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
+| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `sorting` (`createTime` `asc`/`desc`; oldest first by default), `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `includeExtensionProperties`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
 | `POST /external-task/{id}/complete` | `variables` go to the workflow scope. `localVariables` are visible only to output mappings. |
 | `POST /external-task/{id}/failure` | `retries > 0`: the task is fetchable again after `retryTimeout`. `retries = 0`: the activity fails. |
 | `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. |

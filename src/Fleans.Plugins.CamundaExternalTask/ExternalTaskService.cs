@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Dynamic;
+using System.Globalization;
 using System.Text.Json;
 using Fleans.Application.CustomTasks;
 using Fleans.Application.Grains;
@@ -41,6 +42,13 @@ public sealed partial class ExternalTaskService(
 
     /// <summary>How long a task stays locked while a worker's report is written into the workflow.</summary>
     private static readonly TimeSpan ReportLockDuration = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Input-mapping target prefix for Camunda's <c>camunda:properties</c>:
+    /// <c>target="extensionProperty_region"</c> is returned as extension property <c>region</c>
+    /// to workers that fetch with <c>includeExtensionProperties</c>, and is not a variable.
+    /// </summary>
+    public const string ExtensionPropertyPrefix = "extensionProperty_";
 
     /// <summary>Error code a Fleans error boundary sees when a worker exhausts its retries.</summary>
     public const string RetriesExhaustedErrorCode = "500";
@@ -261,9 +269,21 @@ public sealed partial class ExternalTaskService(
     {
         var all = (IDictionary<string, object?>)processVariables;
         var locals = new Dictionary<string, object?>(StringComparer.Ordinal);
-        foreach (var mapping in Deserialize<InputMapping>(task.InputMappingsJson)
-                     .Where(m => m.Target != ExternalTaskPriority.InputTarget)) // read at queue time, not a variable
+        var extensionProperties = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var mapping in Deserialize<InputMapping>(task.InputMappingsJson))
+        {
+            if (mapping.Target == ExternalTaskPriority.InputTarget)
+                continue; // read at queue time, not a variable
+            if (mapping.Target.StartsWith(ExtensionPropertyPrefix, StringComparison.Ordinal))
+            {
+                if (topic.IncludeExtensionProperties
+                    && MappingResolver.Resolve(mapping.Source, all) is { } property)
+                    extensionProperties[mapping.Target[ExtensionPropertyPrefix.Length..]] =
+                        Convert.ToString(property, CultureInfo.InvariantCulture) ?? "";
+                continue;
+            }
             locals[mapping.Target] = MappingResolver.Resolve(mapping.Source, all);
+        }
 
         var visible = new Dictionary<string, object?>(StringComparer.Ordinal);
         if (!topic.LocalVariables)
@@ -294,7 +314,7 @@ public sealed partial class ExternalTaskService(
             Priority: task.Priority,
             BusinessKey: null,
             Variables: CamundaVariables.ToCamundaVariables(selected),
-            ExtensionProperties: new Dictionary<string, string>());
+            ExtensionProperties: extensionProperties);
     }
 
     // ── report back ──────────────────────────────────────────────────────────
