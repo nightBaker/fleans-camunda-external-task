@@ -13,9 +13,10 @@ public sealed record FetchExternalTasksDto(
     int MaxTasks,
     long? AsyncResponseTimeout,
     List<FetchExternalTaskTopicDto>? Topics,
-    bool UsePriority = false);
+    bool? UsePriority = null);
 
-public sealed record PriorityDto(long? Priority);
+/// <summary>A missing <c>priority</c> is 0, as in Camunda's DTO.</summary>
+public sealed record PriorityDto(long Priority);
 
 public sealed record FetchExternalTaskTopicDto(
     string TopicName,

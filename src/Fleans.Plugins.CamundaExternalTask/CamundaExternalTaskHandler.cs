@@ -70,6 +70,11 @@ public sealed partial class CamundaExternalTaskHandler(
             return;
         }
 
+        var id = item.ActivityInstanceId.ToString("D");
+        await using var db = await dbFactory.CreateDbContextAsync();
+        if (await db.ExternalTasks.AnyAsync(t => t.Id == id))
+            return; // redelivered while still waiting — the row (and its priority) is already there
+
         long priority;
         try
         {
@@ -82,11 +87,6 @@ public sealed partial class CamundaExternalTaskHandler(
             await callback.FailActivity(item.ActivityId, item.ActivityInstanceId, ex);
             return;
         }
-
-        var id = item.ActivityInstanceId.ToString("D");
-        await using var db = await dbFactory.CreateDbContextAsync();
-        if (await db.ExternalTasks.AnyAsync(t => t.Id == id))
-            return; // redelivered while still waiting — the row is already there
 
         db.ExternalTasks.Add(new ExternalTaskEntity
         {

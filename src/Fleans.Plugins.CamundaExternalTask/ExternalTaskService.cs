@@ -70,7 +70,7 @@ public sealed partial class ExternalTaskService(
         while (true)
         {
             var wake = signal.Next; // before the query, so a task queued during it is not missed
-            var locked = await TryFetchAndLock(workerId, request.MaxTasks, topics, request.UsePriority, ct);
+            var locked = await TryFetchAndLock(workerId, request.MaxTasks, topics, request.UsePriority == true, ct);
             var remaining = deadline - timeProvider.GetUtcNow();
             if (locked.Count > 0 || remaining <= TimeSpan.Zero)
                 return locked;
@@ -410,8 +410,7 @@ public sealed partial class ExternalTaskService(
     /// </summary>
     public async Task SetPriority(string id, PriorityDto request)
     {
-        if (request.Priority is not { } priority)
-            throw BadRequest("priority is required.");
+        var priority = request.Priority;
         await using var db = await dbFactory.CreateDbContextAsync();
         var updated = await db.ExternalTasks.Where(t => t.Id == id)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.Priority, priority));

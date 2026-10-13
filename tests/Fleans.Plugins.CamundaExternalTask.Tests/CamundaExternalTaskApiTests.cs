@@ -579,6 +579,18 @@ public class CamundaExternalTaskApiTests
     }
 
     [TestMethod]
+    public async Task UsePriority_null_is_accepted()
+    {
+        await Seed("charge-card");
+
+        var response = await _http.PostAsync("/engine-rest/external-task/fetchAndLock", new StringContent(
+            "{\"workerId\":\"w1\",\"maxTasks\":1,\"usePriority\":null,\"topics\":[{\"topicName\":\"charge-card\",\"lockDuration\":1000}]}",
+            System.Text.Encoding.UTF8, "application/json"));
+
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [TestMethod]
     public async Task Without_usePriority_tasks_are_handed_out_oldest_first()
     {
         // Arrange
@@ -652,16 +664,15 @@ public class CamundaExternalTaskApiTests
     }
 
     [TestMethod]
-    public async Task Put_priority_errors_use_camunda_status_codes()
+    public async Task Put_priority_follows_camunda_for_unknown_tasks_and_missing_values()
     {
         var task = await Seed("charge-card");
 
         await AssertError(
             await _http.PutAsJsonAsync($"/engine-rest/external-task/{Guid.NewGuid()}/priority", new { priority = 1 }),
             HttpStatusCode.NotFound, "InvalidRequestException");
-        await AssertError(
-            await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/priority", new { }),
-            HttpStatusCode.BadRequest, "InvalidRequestException");
+        var omitted = await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/priority", new { });
+        Assert.AreEqual(HttpStatusCode.NoContent, omitted.StatusCode, "Camunda treats a missing priority as 0.");
     }
 
     [TestMethod]

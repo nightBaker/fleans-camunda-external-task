@@ -43,6 +43,14 @@ public class ExternalTaskPriorityTests
     }
 
     [TestMethod]
+    public void Whole_numbers_of_any_numeric_type_are_accepted()
+    {
+        foreach (var value in new object[] { 3, (short)3, (byte)3, (sbyte)3, (ushort)3, 3u, 3UL, 3.0f, 3.0, 3m })
+            Assert.AreEqual(3L, ExternalTaskPriority.Evaluate([Mapping("=p")], new Dictionary<string, object?> { ["p"] = value }),
+                value.GetType().Name);
+    }
+
+    [TestMethod]
     [DataRow("=missing")]
     [DataRow("=\"high\"")]
     [DataRow("=2.5")]

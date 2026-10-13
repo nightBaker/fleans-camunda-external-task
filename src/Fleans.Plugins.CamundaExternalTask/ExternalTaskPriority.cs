@@ -19,21 +19,23 @@ public static class ExternalTaskPriority
     /// <summary>
     /// Evaluates the priority mapping against the activity's variables. Throws
     /// <see cref="CustomTaskFailedActivityException"/> (code <c>400</c>) when it does not yield a
-    /// whole number — no retry can fix that, so the caller fails the activity.
+    /// whole number (or a string of digits) — no retry can fix that, so the caller fails the activity.
     /// </summary>
     public static long Evaluate(IEnumerable<InputMapping> inputMappings, IDictionary<string, object?> variables)
     {
         var mapping = inputMappings.LastOrDefault(m => m.Target == InputTarget);
         if (mapping is null) return 0;
 
-        return MappingResolver.Resolve(mapping.Source, variables) switch
+        var value = MappingResolver.Resolve(mapping.Source, variables);
+        return value switch
         {
             long l => l,
-            int i => i,
-            short s => s,
-            byte b => b,
+            int or short or sbyte or byte or ushort or uint => Convert.ToInt64(value),
+            ulong u when u <= long.MaxValue => (long)u,
             double d when IsWhole(d) => (long)d,
+            float f when IsWhole(f) => (long)f,
             decimal m when m == decimal.Truncate(m) && m is >= long.MinValue and <= long.MaxValue => (long)m,
+            // A bare BPMN literal (source="10") resolves to a string.
             string text when long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) => parsed,
             var other => throw new CustomTaskFailedActivityException("400",
                 $"Task priority '{mapping.Source}' evaluated to '{other ?? "null"}', which is not a whole number."),

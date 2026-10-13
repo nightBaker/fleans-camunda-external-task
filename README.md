@@ -72,10 +72,14 @@ Camunda's `camunda:taskPriority` attribute becomes the reserved input `taskPrior
 ```
 
 The source is a literal or a path over the workflow variables. It is evaluated once, when
-the task is queued, and must give a whole number. Otherwise the activity fails with error
-code `400`. Without the input, the priority is `0`. `taskPriority` sets the priority
+the task is queued, and must give a whole number (a string of digits also counts). Otherwise
+the activity fails with error code `400`. Without the input, the priority is `0`. `taskPriority` sets the priority
 only and is not sent to the worker as a variable. Workers that fetch with `usePriority: true`
 get the highest priority first, then the oldest. The Java and JS clients send that by default.
+
+**Upgrading from 0.6.0:** `taskPriority` was an ordinary input before. If a process already
+maps a worker variable to that name, rename the target, or it becomes the priority. The
+`Priority` column is added to the existing table at startup.
 
 ## 2. Run the plugin host
 
