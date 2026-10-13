@@ -45,4 +45,4 @@ The `charge` activity stays **Active** until a worker runs.
 
 Cancel a started instance from the Web UI before running a worker. Then `MODE=complete node worker.js` receives no task, and the host logs EventId 9365 (*stale task removed*).
 
-Last run: 2026-10-12, scenarios A–C passed against fleans `main` (published as 0.6.0-preview.1) with `camunda-external-task-client-js` 3.1.0.
+Last run: 2026-10-12, scenarios A–C passed against fleans `main` (released as 0.6.0) with `camunda-external-task-client-js` 3.1.0.
