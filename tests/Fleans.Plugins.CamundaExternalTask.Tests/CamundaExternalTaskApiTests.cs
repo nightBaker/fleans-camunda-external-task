@@ -562,9 +562,141 @@ public class CamundaExternalTaskApiTests
         Assert.HasCount(1, await Fetch("w1", "charge-card"));
     }
 
+    [TestMethod]
+    public async Task UsePriority_hands_out_higher_priority_tasks_first()
+    {
+        // Arrange — the oldest task has the lowest priority.
+        var low = await Seed("charge-card", priority: 1);
+        var high = await Seed("charge-card", priority: 50);
+        var mid = await Seed("charge-card", priority: 10);
+
+        // Act
+        var byPriority = await Fetch("w1", "charge-card", usePriority: true);
+
+        // Assert
+        CollectionAssert.AreEqual(new[] { high.Id, mid.Id, low.Id }, Ids(byPriority));
+        CollectionAssert.AreEqual(new long[] { 50, 10, 1 }, byPriority.Select(t => (long)t!["priority"]!).ToArray());
+    }
+
+    [TestMethod]
+    public async Task UsePriority_null_is_accepted()
+    {
+        await Seed("charge-card");
+
+        var response = await _http.PostAsync("/engine-rest/external-task/fetchAndLock", new StringContent(
+            "{\"workerId\":\"w1\",\"maxTasks\":1,\"usePriority\":null,\"topics\":[{\"topicName\":\"charge-card\",\"lockDuration\":1000}]}",
+            System.Text.Encoding.UTF8, "application/json"));
+
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task Without_usePriority_tasks_are_handed_out_oldest_first()
+    {
+        // Arrange
+        var old = await Seed("charge-card", priority: 1);
+        var young = await Seed("charge-card", priority: 50);
+
+        // Act
+        var first = await Fetch("w1", "charge-card", maxTasks: 1);
+
+        // Assert
+        CollectionAssert.AreEqual(new[] { old.Id }, Ids(first));
+        Assert.IsNotNull(young);
+    }
+
+    [TestMethod]
+    public async Task UsePriority_orders_across_topics()
+    {
+        // Arrange
+        var card = await Seed("charge-card", priority: 1);
+        var fraud = await Seed("check-fraud", priority: 5);
+
+        // Act
+        var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
+        {
+            workerId = "w1",
+            maxTasks = 1,
+            usePriority = true,
+            topics = new[]
+            {
+                new { topicName = "charge-card", lockDuration = 10_000 },
+                new { topicName = "check-fraud", lockDuration = 10_000 },
+            },
+        });
+
+        // Assert
+        var tasks = JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsArray();
+        CollectionAssert.AreEqual(new[] { fraud.Id }, Ids(tasks));
+        Assert.IsNotNull(card);
+    }
+
+    [TestMethod]
+    public async Task The_priority_input_mapping_is_not_sent_to_the_worker_as_a_variable()
+    {
+        // Arrange
+        await Seed("charge-card", inputs: [new InputMapping("=7", ExternalTaskPriority.InputTarget)], priority: 7);
+
+        // Act
+        var tasks = await Fetch("w1", "charge-card", localVariables: true);
+
+        // Assert
+        Assert.AreEqual(7L, (long)tasks[0]!["priority"]!);
+        Assert.HasCount(0, Names(tasks[0]!["variables"]!));
+    }
+
+    [TestMethod]
+    public async Task Put_priority_changes_the_fetch_order()
+    {
+        // Arrange
+        var first = await Seed("charge-card", priority: 10);
+        var second = await Seed("charge-card", priority: 0);
+
+        // Act
+        var response = await _http.PutAsJsonAsync($"/engine-rest/external-task/{second.Id}/priority", new { priority = 100 });
+        var tasks = await Fetch("w1", "charge-card", usePriority: true, maxTasks: 1);
+
+        // Assert
+        Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
+        CollectionAssert.AreEqual(new[] { second.Id }, Ids(tasks));
+        Assert.AreEqual(100L, (await Row(second.Id))!.Priority);
+        Assert.AreEqual(10L, (await Row(first.Id))!.Priority);
+    }
+
+    [TestMethod]
+    public async Task Put_priority_follows_camunda_for_unknown_tasks_and_missing_values()
+    {
+        var task = await Seed("charge-card");
+
+        await AssertError(
+            await _http.PutAsJsonAsync($"/engine-rest/external-task/{Guid.NewGuid()}/priority", new { priority = 1 }),
+            HttpStatusCode.NotFound, "InvalidRequestException");
+        var omitted = await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/priority", new { });
+        Assert.AreEqual(HttpStatusCode.NoContent, omitted.StatusCode, "Camunda treats a missing priority as 0.");
+    }
+
+    [TestMethod]
+    public async Task Schema_initializer_adds_the_priority_column_to_a_table_from_0_6_0()
+    {
+        // Arrange — a table created by 0.6.0, before tasks had a priority.
+        var factory = _app.Services.GetRequiredService<IDbContextFactory<ExternalTaskDbContext>>();
+        await using (var db = await factory.CreateDbContextAsync())
+            await db.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE {ExternalTaskDbContext.TableName} DROP COLUMN \"Priority\"");
+
+        // Act
+        await new ExternalTaskSchemaInitializer(factory).StartAsync(CancellationToken.None);
+
+        // Assert
+        var task = await Seed("charge-card", priority: 3);
+        Assert.AreEqual(3L, (await Row(task.Id))!.Priority);
+    }
+
+    private static string[] Ids(JsonArray tasks) => tasks.Select(t => (string)t!["id"]!).ToArray();
+
     private async Task<ExternalTaskEntity> Seed(
         string topic, List<InputMapping>? inputs = null, List<OutputMapping>? outputs = null,
-        string processDefinitionKey = "order-process")
+        string processDefinitionKey = "order-process", long priority = 0)
     {
         var activityInstanceId = Guid.NewGuid();
         var entity = new ExternalTaskEntity
@@ -579,6 +711,7 @@ public class CamundaExternalTaskApiTests
             VariablesId = Guid.NewGuid(),
             InputMappingsJson = JsonSerializer.Serialize(inputs ?? []),
             OutputMappingsJson = JsonSerializer.Serialize(outputs ?? []),
+            Priority = priority,
             CreateTime = _clock.GetUtcNow().UtcDateTime,
         };
         _clock.Advance(TimeSpan.FromMilliseconds(1));
@@ -600,12 +733,14 @@ public class CamundaExternalTaskApiTests
     private async Task<ExternalTaskEntity?> Row(string id) => (await Rows()).SingleOrDefault(r => r.Id == id);
 
     private async Task<JsonArray> Fetch(
-        string workerId, string topic, long lockDuration = 10_000, string[]? variables = null, bool localVariables = false)
+        string workerId, string topic, long lockDuration = 10_000, string[]? variables = null, bool localVariables = false,
+        bool usePriority = false, int maxTasks = 10)
     {
         var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
         {
             workerId,
-            maxTasks = 10,
+            maxTasks,
+            usePriority,
             topics = new[] { new { topicName = topic, lockDuration, variables, localVariables } },
         });
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, await response.Content.ReadAsStringAsync());

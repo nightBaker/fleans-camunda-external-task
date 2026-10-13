@@ -80,6 +80,12 @@ public static partial class CamundaExternalTaskEndpoints
             return Results.NoContent();
         });
 
+        group.MapPut("/{id}/priority", async (string id, PriorityDto body, ExternalTaskService service) =>
+        {
+            await service.SetPriority(id, body);
+            return Results.NoContent();
+        });
+
         return group;
     }
 

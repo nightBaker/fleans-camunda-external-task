@@ -1,6 +1,7 @@
 using System.Dynamic;
 using System.Text.Json;
 using Fleans.Application.Grains;
+using Fleans.Domain.Errors;
 using Fleans.Domain.Events;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -72,7 +73,20 @@ public sealed partial class CamundaExternalTaskHandler(
         var id = item.ActivityInstanceId.ToString("D");
         await using var db = await dbFactory.CreateDbContextAsync();
         if (await db.ExternalTasks.AnyAsync(t => t.Id == id))
-            return; // redelivered while still waiting — the row is already there
+            return; // redelivered while still waiting — the row (and its priority) is already there
+
+        long priority;
+        try
+        {
+            priority = ExternalTaskPriority.Evaluate(item.InputMappings, (IDictionary<string, object?>)variables);
+        }
+        catch (CustomTaskFailedActivityException ex)
+        {
+            // Deterministic (not a number, broken path): a redelivery would fail the same way.
+            LogPriorityFailed(ex, item.ActivityId);
+            await callback.FailActivity(item.ActivityId, item.ActivityInstanceId, ex);
+            return;
+        }
 
         db.ExternalTasks.Add(new ExternalTaskEntity
         {
@@ -86,6 +100,7 @@ public sealed partial class CamundaExternalTaskHandler(
             VariablesId = item.VariablesId,
             InputMappingsJson = JsonSerializer.Serialize(item.InputMappings),
             OutputMappingsJson = JsonSerializer.Serialize(item.OutputMappings),
+            Priority = priority,
             CreateTime = timeProvider.GetUtcNow().UtcDateTime,
         });
         try
@@ -127,6 +142,10 @@ public sealed partial class CamundaExternalTaskHandler(
     [LoggerMessage(EventId = 9354, Level = LogLevel.Error,
         Message = "Camunda external-task event for activity {ActivityId} could not be checked — failing the activity")]
     private partial void LogActiveCheckFailed(Exception ex, string activityId);
+
+    [LoggerMessage(EventId = 9356, Level = LogLevel.Error,
+        Message = "Task priority of Camunda external-task activity {ActivityId} is invalid — failing the activity")]
+    private partial void LogPriorityFailed(Exception ex, string activityId);
 
     [LoggerMessage(EventId = 9353, Level = LogLevel.Error,
         Message = "Camunda external-task event stream error")]

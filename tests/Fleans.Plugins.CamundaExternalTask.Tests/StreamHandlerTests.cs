@@ -117,6 +117,46 @@ public class StreamHandlerTests
         Assert.AreEqual(1, await RowCount(instanceId));
     }
 
+    [TestMethod]
+    public async Task Priority_mapping_is_evaluated_when_the_task_is_queued()
+    {
+        // Arrange — one literal, one expression over the activity's variables.
+        var (literalInstance, literal) = NewTask("ship-order", inputs: [new InputMapping("=10", ExternalTaskPriority.InputTarget)]);
+        var (expressionInstance, expression) = NewTask("ship-order",
+            inputs: [new InputMapping("=order.priority", ExternalTaskPriority.InputTarget)]);
+        FakeWorkflowInstance.Activate(literal.ActivityInstanceId);
+        FakeWorkflowInstance.Activate(expression.ActivityInstanceId,
+            ("order", new Dictionary<string, object?> { ["priority"] = 25L }));
+
+        // Act
+        await Publish(literal);
+        await Publish(expression);
+        await WaitUntil(async () => await RowCount(literalInstance) == 1 && await RowCount(expressionInstance) == 1);
+        var tasks = await Service.FetchAndLock(
+            Fetch("ship-order") with { MaxTasks = 2, UsePriority = true }, default);
+
+        // Assert
+        CollectionAssert.AreEqual(new long[] { 25, 10 }, tasks.Select(t => t.Priority).ToArray());
+        CollectionAssert.AreEqual(new[] { expressionInstance.ToString("D"), literalInstance.ToString("D") },
+            tasks.Select(t => t.ProcessInstanceId).ToArray());
+    }
+
+    [TestMethod]
+    public async Task Priority_that_is_not_a_number_fails_the_activity()
+    {
+        // Arrange
+        var (instanceId, evt) = NewTask("ship-order", inputs: [new InputMapping("=label", ExternalTaskPriority.InputTarget)]);
+        FakeWorkflowInstance.Activate(evt.ActivityInstanceId, ("label", "urgent"));
+
+        // Act
+        await Publish(evt);
+        await WaitUntil(() => Task.FromResult(FakeWorkflowInstance.Calls.Contains($"fail:{evt.ActivityId}:400")));
+
+        // Assert
+        Assert.Contains($"fail:{evt.ActivityId}:400", FakeWorkflowInstance.Calls);
+        Assert.AreEqual(0, await RowCount(instanceId));
+    }
+
     private static (Guid InstanceId, ExecuteCustomTaskEvent Event) NewTask(string topic, List<InputMapping>? inputs = null)
     {
         var instanceId = Guid.NewGuid();

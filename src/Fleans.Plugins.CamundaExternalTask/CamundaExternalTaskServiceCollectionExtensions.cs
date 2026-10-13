@@ -1,5 +1,7 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -68,6 +70,34 @@ internal sealed class ExternalTaskSchemaInitializer(IDbContextFactory<ExternalTa
             .Replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", StringComparison.Ordinal);
         await db.Database.ExecuteSqlRawAsync(script, cancellationToken);
+        await AddPriorityColumn(db, cancellationToken);
+    }
+
+    /// <summary>
+    /// Tables created by 0.6.0 have no <see cref="ExternalTaskEntity.Priority"/> column, and
+    /// <c>CREATE TABLE IF NOT EXISTS</c> leaves an existing table as it is. A replica that loses
+    /// the race to add it fails here, retries, and finds the column.
+    /// </summary>
+    private static async Task AddPriorityColumn(ExternalTaskDbContext db, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await db.ExternalTasks.Select(t => t.Priority).FirstOrDefaultAsync(cancellationToken);
+            return;
+        }
+        catch (DbException)
+        {
+            // Column missing — add it below.
+        }
+
+        var entity = db.Model.FindEntityType(typeof(ExternalTaskEntity))!;
+        var priority = entity.FindProperty(nameof(ExternalTaskEntity.Priority))!;
+        var table = StoreObjectIdentifier.Table(ExternalTaskDbContext.TableName, entity.GetSchema());
+        var sql = db.GetService<ISqlGenerationHelper>();
+        await db.Database.ExecuteSqlRawAsync(
+            $"ALTER TABLE {sql.DelimitIdentifier(ExternalTaskDbContext.TableName, entity.GetSchema())} " +
+            $"ADD COLUMN {sql.DelimitIdentifier(priority.GetColumnName(table)!)} {priority.GetColumnType()} NOT NULL DEFAULT 0",
+            cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
