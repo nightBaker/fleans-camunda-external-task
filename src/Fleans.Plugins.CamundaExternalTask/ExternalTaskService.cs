@@ -277,22 +277,7 @@ public sealed partial class ExternalTaskService(
         ExternalTaskEntity task, ExpandoObject processVariables, FetchExternalTaskTopicDto topic)
     {
         var all = (IDictionary<string, object?>)processVariables;
-        var locals = new Dictionary<string, object?>(StringComparer.Ordinal);
-        var extensionProperties = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var mapping in Deserialize<InputMapping>(task.InputMappingsJson))
-        {
-            if (mapping.Target.StartsWith(ExtensionPropertyPrefix, StringComparison.Ordinal))
-            {
-                if (topic.IncludeExtensionProperties
-                    && MappingResolver.Resolve(mapping.Source, all) is { } property)
-                    extensionProperties[mapping.Target[ExtensionPropertyPrefix.Length..]] =
-                        Convert.ToString(property, CultureInfo.InvariantCulture) ?? "";
-                continue;
-            }
-            if (ReservedInputs.IsReserved(mapping.Target))
-                continue; // task metadata read at queue time, not a variable
-            locals[mapping.Target] = MappingResolver.Resolve(mapping.Source, all);
-        }
+        var locals = ResolveInputs(task, all, topic.IncludeExtensionProperties, out var extensionProperties);
 
         var visible = new Dictionary<string, object?>(StringComparer.Ordinal);
         if (!topic.LocalVariables)
@@ -324,6 +309,55 @@ public sealed partial class ExternalTaskService(
             BusinessKey: task.BusinessKey,
             Variables: CamundaVariables.ToCamundaVariables(selected),
             ExtensionProperties: extensionProperties);
+    }
+
+    /// <summary>
+    /// The worker's local variables (input mappings) and, when asked for, the extension properties.
+    /// Other reserved inputs are task metadata read at queue time, not variables.
+    /// </summary>
+    private static Dictionary<string, object?> ResolveInputs(
+        ExternalTaskEntity task, IDictionary<string, object?> processVariables, bool includeExtensionProperties,
+        out Dictionary<string, string> extensionProperties)
+    {
+        var locals = new Dictionary<string, object?>(StringComparer.Ordinal);
+        extensionProperties = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var mapping in Deserialize<InputMapping>(task.InputMappingsJson))
+        {
+            if (mapping.Target.StartsWith(ExtensionPropertyPrefix, StringComparison.Ordinal))
+            {
+                if (includeExtensionProperties
+                    && MappingResolver.Resolve(mapping.Source, processVariables) is { } property)
+                    extensionProperties[mapping.Target[ExtensionPropertyPrefix.Length..]] =
+                        Convert.ToString(property, CultureInfo.InvariantCulture) ?? "";
+                continue;
+            }
+            if (!ReservedInputs.IsReserved(mapping.Target))
+                locals[mapping.Target] = MappingResolver.Resolve(mapping.Source, processVariables);
+        }
+        return locals;
+    }
+
+    // ── file variables ──────────────────────────────────────────────────────
+
+    public sealed record BinaryContent(byte[] Content, string? MimeType, string? Filename);
+
+    /// <summary>
+    /// Content of a <c>File</c> or <c>Bytes</c> variable the task sees, for Camunda clients that
+    /// download file variables lazily. <paramref name="executionId"/> is the task id.
+    /// </summary>
+    public async Task<BinaryContent> GetBinaryVariable(string executionId, string name)
+    {
+        var task = await Load(executionId);
+        var variables = await Callback(task).GetVariablesIfActive(task.ActivityInstanceId, task.VariablesId)
+            ?? throw NotFound(executionId);
+        var all = (IDictionary<string, object?>)variables;
+        var locals = ResolveInputs(task, all, includeExtensionProperties: false, out _);
+        if (!locals.TryGetValue(name, out var value) && !all.TryGetValue(name, out value))
+            throw new ExternalTaskApiException(404, "InvalidRequestException",
+                $"Variable '{name}' does not exist for execution {executionId}");
+        if (!CamundaVariables.TryGetBinary(value, out var binary))
+            throw BadRequest($"Variable '{name}' is not a File or Bytes variable.");
+        return new BinaryContent(Convert.FromBase64String(binary.Base64), binary.MimeType, binary.Filename);
     }
 
     // ── report back ──────────────────────────────────────────────────────────

@@ -13,13 +13,15 @@ namespace Fleans.Plugins.CamundaExternalTask;
 public static partial class CamundaExternalTaskEndpoints
 {
     /// <summary>
-    /// Maps <c>{basePath}/external-task/*</c>. Returns the route group so the host can add
-    /// authorization (<c>.RequireAuthorization()</c>), rate limiting, etc.
+    /// Maps <c>{basePath}/external-task/*</c>, plus the file-variable download
+    /// <c>{basePath}/execution/{id}/localVariables/{name}/data</c> that Camunda clients call for
+    /// <c>File</c> variables. Returns the <c>{basePath}</c> route group so the host can add
+    /// authorization (<c>.RequireAuthorization()</c>), rate limiting, etc. to both.
     /// </summary>
     public static RouteGroupBuilder MapCamundaExternalTaskApi(
         this IEndpointRouteBuilder endpoints, string basePath = "/engine-rest")
     {
-        var group = endpoints.MapGroup($"{basePath.TrimEnd('/')}/external-task")
+        var root = endpoints.MapGroup(basePath.TrimEnd('/'))
             .WithTags("Camunda External Task")
             .AddEndpointFilter(async (context, next) =>
             {
@@ -40,6 +42,14 @@ public static partial class CamundaExternalTaskEndpoints
                     return Json(new CamundaErrorDto("ProcessEngineException", ex.Message), StatusCodes.Status500InternalServerError);
                 }
             });
+
+        root.MapGet("/execution/{id}/localVariables/{name}/data", async (string id, string name, ExternalTaskService service) =>
+        {
+            var file = await service.GetBinaryVariable(id, name);
+            return Results.File(file.Content, file.MimeType ?? "application/octet-stream", file.Filename);
+        });
+
+        var group = root.MapGroup("/external-task");
 
         group.MapPost("/fetchAndLock", async (FetchExternalTasksDto body, ExternalTaskService service, HttpContext http) =>
             Json(await service.FetchAndLock(body, http.RequestAborted)));
@@ -86,7 +96,7 @@ public static partial class CamundaExternalTaskEndpoints
             return Results.NoContent();
         });
 
-        return group;
+        return root;
     }
 
     /// <summary>

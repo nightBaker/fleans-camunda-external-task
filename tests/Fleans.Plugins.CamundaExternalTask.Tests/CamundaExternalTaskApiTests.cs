@@ -217,7 +217,15 @@ public class CamundaExternalTaskApiTests
         var unsupported = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/complete", new
         {
             workerId = "w1",
-            variables = new { file = new { value = "AAEC", type = "Bytes" } },
+            variables = new
+            {
+                customer = new
+                {
+                    value = "rO0AB",
+                    type = "Object",
+                    valueInfo = new { serializationDataFormat = "application/x-java-serialized-object" },
+                },
+            },
         });
 
         // Assert
@@ -812,6 +820,48 @@ public class CamundaExternalTaskApiTests
         var tasks = await Fetch("w1", "charge-card", localVariables: true);
 
         CollectionAssert.AreEquivalent(new[] { "who" }, Names(tasks[0]!["variables"]!));
+    }
+
+    [TestMethod]
+    public async Task File_variables_are_stored_returned_by_type_and_downloadable()
+    {
+        // Arrange — the worker completes with a File; the workflow then holds what Fleans stored.
+        var task = await Seed("make-invoice");
+        await Fetch("w1", "make-invoice");
+        ExpandoObject? completed = null;
+        await _callback.CompleteActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Do<ExpandoObject>(v => completed = v));
+        var complete = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/complete", new
+        {
+            workerId = "w1",
+            variables = new Dictionary<string, object>
+            {
+                ["invoice"] = new
+                {
+                    value = Convert.ToBase64String("PDF-1.7"u8.ToArray()),
+                    type = "File",
+                    valueInfo = new { filename = "invoice.pdf", mimetype = "application/pdf", encoding = "" },
+                },
+            },
+        });
+        Assert.AreEqual(HttpStatusCode.NoContent, complete.StatusCode, await complete.Content.ReadAsStringAsync());
+        _processVariables = Expando(("invoice", ((IDictionary<string, object?>)completed!)["invoice"]), ("customer", "bob"));
+        var next = await Seed("send-invoice");
+
+        // Act
+        var fetched = await Fetch("w2", "send-invoice");
+        var download = await _http.GetAsync($"/engine-rest/execution/{next.Id}/localVariables/invoice/data");
+        var notBinary = await _http.GetAsync($"/engine-rest/execution/{next.Id}/localVariables/customer/data");
+        var missing = await _http.GetAsync($"/engine-rest/execution/{next.Id}/localVariables/nope/data");
+
+        // Assert
+        var invoice = fetched[0]!["variables"]!["invoice"]!;
+        Assert.AreEqual("File", (string?)invoice["type"]);
+        Assert.AreEqual("invoice.pdf", (string?)invoice["valueInfo"]!["filename"]);
+        Assert.AreEqual(HttpStatusCode.OK, download.StatusCode);
+        Assert.AreEqual("application/pdf", download.Content.Headers.ContentType?.MediaType);
+        Assert.AreEqual("PDF-1.7", await download.Content.ReadAsStringAsync());
+        await AssertError(notBinary, HttpStatusCode.BadRequest, "InvalidRequestException");
+        await AssertError(missing, HttpStatusCode.NotFound, "InvalidRequestException");
     }
 
     /// <summary>Fetches with the given topic filters, then unlocks what it got.</summary>

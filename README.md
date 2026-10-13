@@ -212,6 +212,7 @@ These are the endpoints the official Java and JS external-task clients call:
 | `POST /external-task/{id}/failure` | `retries > 0`: the task is fetchable again after `retryTimeout`. `retries = 0`: the activity fails. |
 | `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. |
 | `POST /external-task/{id}/extendLock`, `/lock`, `/unlock` | Same semantics as Camunda. |
+| `GET /execution/{id}/localVariables/{name}/data` | Content of a `File` (or `Bytes`) variable. The Java and JS clients call it to load file variables. `{id}` is the task id. |
 | `PUT /external-task/{id}/priority` | Operator override of the priority from the BPMN. Takes effect on the next fetch. |
 
 Errors use Camunda's `{ "type", "message" }` body and status codes:
@@ -227,10 +228,14 @@ the bare `application/json` content type, the only one the JS client parses.
   boundary event can catch it.
 - **`bpmnError` variables are ignored** (a warning is logged).
 - **Variable types:** `String`, `Boolean`, `Integer`, `Short`, `Long`, `Double`, `Date` (kept as a
-  string), `Null`, `Json`, and `Object` with `serializationDataFormat: application/json`.
+  string), `Null`, `Json`, `Bytes`, `File`, and `Object` with `serializationDataFormat: application/json`.
+  `Bytes` and `File` are stored in the workflow as
+  `{ "camundaType": "Bytes" | "File", "value": "<base64>", "filename", "mimeType", "encoding" }`
+  and come back to workers with their original type. They live in the workflow state, so keep
+  them small and pass large files by reference (a URL or storage key) instead.
   Objects and lists come back as `Json`. Whole numbers come back as `Integer` when they fit in
-  32 bits and as `Long` otherwise, so Java workers should read them as `Number`. `Bytes`, `File`
-  and Java-serialized objects are rejected with `400`.
+  32 bits and as `Long` otherwise, so Java workers should read them as `Number`. Java-serialized
+  objects are rejected with `400`.
 - **Identifiers:** task `id`, `executionId` and `activityInstanceId` are the Fleans activity
   instance id. `processInstanceId` is the workflow instance id, and `processDefinitionKey` is the
   process id. `businessKey` and `tenantId` come from reserved inputs (see
