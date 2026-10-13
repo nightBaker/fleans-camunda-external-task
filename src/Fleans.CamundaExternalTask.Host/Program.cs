@@ -31,10 +31,11 @@ builder.Services.TryAddSingleton<IConnectionMultiplexer>(sp =>
     sp.GetRequiredKeyedService<IConnectionMultiplexer>("orleans-redis"));
 
 // Must match the engine's stream settings — a different TotalQueueCount hashes stream ids onto
-// different queues than the engine silos publish to.
+// different queues than the engine silos publish to. Same key and default as the engine, so the
+// engine's Fleans__Streaming__Redis__TotalQueueCount applies here unchanged.
 const string StreamProviderName = "StreamProvider";
 builder.Services.AddOptions<HashRingStreamQueueMapperOptions>(StreamProviderName)
-    .Configure(o => o.TotalQueueCount = builder.Configuration.GetValue("Fleans:Streaming:QueueCount", 8));
+    .Configure(o => o.TotalQueueCount = builder.Configuration.GetValue("Fleans:Streaming:Redis:TotalQueueCount", 8));
 builder.Services.AddOptions<SimpleQueueCacheOptions>(StreamProviderName);
 builder.Services.AddOptions<RedisStreamReceiverOptions>(StreamProviderName)
     .Configure(o =>
@@ -85,7 +86,6 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 app.MapHealthChecks("/health");
-var api = app.MapCamundaExternalTaskApi(builder.Configuration["CamundaExternalTasks:BasePath"] ?? "/engine-rest");
-if (builder.Configuration.GetValue<bool>("CamundaExternalTasks:RequireAuthorization"))
-    api.RequireAuthorization(); // configure an authentication scheme in your own fork
+// Anonymous: put the host behind your gateway, or fork and add authentication + .RequireAuthorization().
+app.MapCamundaExternalTaskApi();
 app.Run();

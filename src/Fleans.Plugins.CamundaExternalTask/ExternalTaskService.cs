@@ -18,22 +18,6 @@ public sealed class ExternalTaskApiException(int statusCode, string type, string
     public string Type { get; } = type;
 }
 
-/// <summary>Filters of <c>GET /external-task</c> and <c>GET /external-task/count</c>.</summary>
-public sealed record ExternalTaskQuery(
-    string? ExternalTaskId = null,
-    string? TopicName = null,
-    string? WorkerId = null,
-    bool Locked = false,
-    bool NotLocked = false,
-    bool WithRetriesLeft = false,
-    bool NoRetriesLeft = false,
-    string? ProcessInstanceId = null,
-    string? ActivityId = null,
-    string? ProcessDefinitionId = null,
-    string? ProcessDefinitionKey = null,
-    int? FirstResult = null,
-    int? MaxResults = null);
-
 /// <summary>
 /// Camunda 7 external-task semantics on top of <see cref="ExternalTaskDbContext"/> and the engine's
 /// narrow <see cref="IWorkflowInstanceCallback"/>. Locks are claimed with a conditional
@@ -86,7 +70,7 @@ public sealed partial class ExternalTaskService(
         while (true)
         {
             var wake = signal.Next; // before the query, so a task queued during it is not missed
-            var locked = await TryFetchAndLock(workerId, request.MaxTasks, request.UsePriority, topics, ct);
+            var locked = await TryFetchAndLock(workerId, request.MaxTasks, topics, ct);
             var remaining = deadline - timeProvider.GetUtcNow();
             if (locked.Count > 0 || remaining <= TimeSpan.Zero)
                 return locked;
@@ -101,7 +85,7 @@ public sealed partial class ExternalTaskService(
     }
 
     private async Task<List<LockedExternalTaskDto>> TryFetchAndLock(
-        string workerId, int maxTasks, bool usePriority, List<FetchExternalTaskTopicDto> topics, CancellationToken ct)
+        string workerId, int maxTasks, List<FetchExternalTaskTopicDto> topics, CancellationToken ct)
     {
         var result = new List<LockedExternalTaskDto>();
         if (maxTasks == 0 || topics.Count == 0) return result;
@@ -118,14 +102,14 @@ public sealed partial class ExternalTaskService(
                 var candidates = new List<(ExternalTaskEntity Task, FetchExternalTaskTopicDto Topic)>();
                 foreach (var topic in topics)
                 {
-                    var rows = await Ordered(Available(db, topic, now, skipped), usePriority).Take(want).ToListAsync(ct);
+                    var rows = await Available(db, topic, now, skipped).OrderBy(t => t.CreateTime).Take(want).ToListAsync(ct);
                     candidates.AddRange(rows.Select(r => (r, topic)));
                 }
                 if (candidates.Count == 0) break;
 
-                var batch = (usePriority
-                        ? candidates.OrderByDescending(c => c.Task.Priority).ThenBy(c => c.Task.CreateTime)
-                        : candidates.OrderBy(c => c.Task.CreateTime))
+                // Oldest first across topics. usePriority is accepted but has no effect: tasks have no
+                // priority yet (see issue #1).
+                var batch = candidates.OrderBy(c => c.Task.CreateTime)
                     .DistinctBy(c => c.Task.Id)
                     .Take(want);
                 foreach (var (candidate, topic) in batch)
@@ -168,9 +152,6 @@ public sealed partial class ExternalTaskService(
             q = q.Where(t => t.ProcessDefinitionId != null && definitionIds.Contains(t.ProcessDefinitionId));
         return q;
     }
-
-    private static IQueryable<ExternalTaskEntity> Ordered(IQueryable<ExternalTaskEntity> q, bool usePriority) =>
-        usePriority ? q.OrderByDescending(t => t.Priority).ThenBy(t => t.CreateTime) : q.OrderBy(t => t.CreateTime);
 
     /// <summary>
     /// Locks one row for <paramref name="workerId"/> and builds its response. Returns null when the
@@ -273,7 +254,7 @@ public sealed partial class ExternalTaskService(
             ErrorMessage: task.ErrorMessage,
             ErrorDetails: task.ErrorDetails,
             TenantId: null,
-            Priority: task.Priority,
+            Priority: 0,
             BusinessKey: null,
             Variables: CamundaVariables.ToCamundaVariables(selected),
             ExtensionProperties: new Dictionary<string, string>());
@@ -417,102 +398,6 @@ public sealed partial class ExternalTaskService(
         signal.Pulse();
     }
 
-    public async Task SetRetries(string id, RetriesDto request)
-    {
-        if (request.Retries is not { } retries || retries < 0)
-            throw BadRequest("retries must be a number greater than or equal to 0.");
-        if (retries == 0)
-        {
-            var task = await ClaimForReport(id, null, "failed");
-            await FailRetriesExhausted(task, task.ErrorMessage, task.ErrorDetails);
-            return;
-        }
-
-        await Load(id);
-        var now = UtcNow();
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var updated = await db.ExternalTasks
-            .Where(t => t.Id == id && (t.ReportingUntil == null || t.ReportingUntil <= now))
-            .ExecuteUpdateAsync(s => s.SetProperty(t => t.Retries, retries));
-        if (updated == 0)
-            throw await Rejected(id, null, "updated");
-    }
-
-    public async Task SetPriority(string id, PriorityDto request)
-    {
-        await Load(id);
-        await using var db = await dbFactory.CreateDbContextAsync();
-        await db.ExternalTasks.Where(t => t.Id == id).ExecuteUpdateAsync(s => s.SetProperty(t => t.Priority, request.Priority));
-    }
-
-    // ── queries ──────────────────────────────────────────────────────────────
-
-    public async Task<ExternalTaskDto> Get(string id) => ToDto(await Load(id));
-
-    public async Task<List<ExternalTaskDto>> Query(ExternalTaskQuery query)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync();
-        IQueryable<ExternalTaskEntity> q = Filter(db.ExternalTasks.AsNoTracking(), query).OrderBy(t => t.CreateTime);
-        if (query.FirstResult is > 0) q = q.Skip(query.FirstResult.Value);
-        if (query.MaxResults is >= 0) q = q.Take(query.MaxResults.Value);
-        return (await q.ToListAsync()).Select(ToDto).ToList();
-    }
-
-    public async Task<long> Count(ExternalTaskQuery query)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync();
-        return await Filter(db.ExternalTasks.AsNoTracking(), query).LongCountAsync();
-    }
-
-    public async Task<List<string>> TopicNames(bool withLockedTasks, bool withUnlockedTasks, bool withRetriesLeft)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var q = Filter(db.ExternalTasks.AsNoTracking(), new ExternalTaskQuery(
-            Locked: withLockedTasks, NotLocked: withUnlockedTasks, WithRetriesLeft: withRetriesLeft));
-        return await q.Select(t => t.TopicName).Distinct().OrderBy(t => t).ToListAsync();
-    }
-
-    private IQueryable<ExternalTaskEntity> Filter(IQueryable<ExternalTaskEntity> q, ExternalTaskQuery f)
-    {
-        var now = UtcNow();
-        if (f.ExternalTaskId is not null) q = q.Where(t => t.Id == f.ExternalTaskId);
-        if (f.TopicName is not null) q = q.Where(t => t.TopicName == f.TopicName);
-        if (f.WorkerId is not null) q = q.Where(t => t.WorkerId == f.WorkerId);
-        // Camunda semantics: a task waiting out a retryTimeout counts as locked until it is fetchable.
-        if (f.Locked) q = q.Where(t => t.LockExpirationTime > now);
-        if (f.NotLocked) q = q.Where(t => t.LockExpirationTime == null || t.LockExpirationTime <= now);
-        if (f.WithRetriesLeft) q = q.Where(t => t.Retries == null || t.Retries > 0);
-        if (f.NoRetriesLeft) q = q.Where(t => t.Retries == 0);
-        if (f.ProcessInstanceId is not null && Guid.TryParse(f.ProcessInstanceId, out var instanceId))
-            q = q.Where(t => t.WorkflowInstanceId == instanceId);
-        else if (f.ProcessInstanceId is not null)
-            q = q.Where(_ => false);
-        if (f.ActivityId is not null) q = q.Where(t => t.ActivityId == f.ActivityId);
-        if (f.ProcessDefinitionId is not null) q = q.Where(t => t.ProcessDefinitionId == f.ProcessDefinitionId);
-        if (f.ProcessDefinitionKey is not null) q = q.Where(t => t.ProcessDefinitionKey == f.ProcessDefinitionKey);
-        return q;
-    }
-
-    private static ExternalTaskDto ToDto(ExternalTaskEntity t) => new(
-        Id: t.Id,
-        TopicName: t.TopicName,
-        WorkerId: t.WorkerId,
-        LockExpirationTime: t.LockExpirationTime is { } l ? CamundaVariables.FormatDate(l) : null,
-        CreateTime: CamundaVariables.FormatDate(t.CreateTime),
-        ActivityId: t.ActivityId,
-        ActivityInstanceId: t.ActivityInstanceId.ToString("D"),
-        ExecutionId: t.ActivityInstanceId.ToString("D"),
-        ProcessInstanceId: t.WorkflowInstanceId.ToString("D"),
-        ProcessDefinitionId: t.ProcessDefinitionId,
-        ProcessDefinitionKey: t.ProcessDefinitionKey,
-        ProcessDefinitionVersionTag: null,
-        Retries: t.Retries,
-        ErrorMessage: t.ErrorMessage,
-        Suspended: false,
-        TenantId: null,
-        Priority: t.Priority,
-        BusinessKey: null);
-
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private async Task FailRetriesExhausted(ExternalTaskEntity task, string? errorMessage, string? errorDetails)
@@ -528,19 +413,19 @@ public sealed partial class ExternalTaskService(
 
     /// <summary>
     /// Marks the task as "result being reported" (<see cref="ExternalTaskEntity.ReportingUntil"/>)
-    /// and pushes its lock out, atomically and only if <paramref name="workerId"/> (any worker when
-    /// null) holds it and no other report is in flight. Then checks the activity is still waiting:
+    /// and pushes its lock out, atomically and only if <paramref name="workerId"/> holds it and no
+    /// other report is in flight. Then checks the activity is still waiting:
     /// if it ended meanwhile (cancelled, interrupted by a boundary event), the task is gone — 404,
     /// as in Camunda — instead of a success the engine would silently ignore.
     /// </summary>
-    private async Task<ExternalTaskEntity> ClaimForReport(string id, string? workerId, string action)
+    private async Task<ExternalTaskEntity> ClaimForReport(string id, string workerId, string action)
     {
         var now = UtcNow();
         var until = now + ReportLockDuration;
         await using (var db = await dbFactory.CreateDbContextAsync())
         {
             var updated = await db.ExternalTasks
-                .Where(t => t.Id == id && (workerId == null || t.WorkerId == workerId)
+                .Where(t => t.Id == id && t.WorkerId == workerId
                     && (t.ReportingUntil == null || t.ReportingUntil <= now))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(t => t.ReportingUntil, until)

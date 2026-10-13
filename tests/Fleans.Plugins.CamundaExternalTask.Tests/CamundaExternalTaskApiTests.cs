@@ -49,7 +49,7 @@ public class CamundaExternalTaskApiTests
         _processVariables = Expando(("amount", 42L), ("customer", "bob"), ("vip", true));
         _callback = Substitute.For<IWorkflowInstanceCallback>();
         _callback.GetVariablesIfActive(Arg.Any<Guid>(), Arg.Any<Guid>())
-            .Returns(_ => ValueTask.FromResult(_processVariables));
+            .Returns<ValueTask<ExpandoObject?>>(_ => ValueTask.FromResult<ExpandoObject?>(_processVariables));
         var grainFactory = Substitute.For<IGrainFactory>();
         grainFactory.GetGrain<IWorkflowInstanceCallback>(Arg.Any<Guid>(), Arg.Any<string?>()).Returns(_callback);
 
@@ -153,11 +153,10 @@ public class CamundaExternalTaskApiTests
 
         // Act
         var tasks = await Fetch("w1", "charge-card");
-        var count = await _http.GetFromJsonAsync<JsonObject>("/engine-rest/external-task/count");
 
         // Assert
         Assert.HasCount(0, tasks);
-        Assert.AreEqual(0, (int)count!["count"]!);
+        Assert.HasCount(0, await Rows());
     }
 
     [TestMethod]
@@ -196,14 +195,13 @@ public class CamundaExternalTaskApiTests
         Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
         await _callback.Received(1).CompleteActivity("ct1", task.ActivityInstanceId, Arg.Any<ExpandoObject>());
         var outputs = (IDictionary<string, object?>)completed!;
-        Assert.AreEqual(true, outputs["charged"]);
+        Assert.IsTrue((bool)outputs["charged"]!);
         Assert.AreEqual(99.5, outputs["total"]);
         CollectionAssert.AreEqual(new List<object?> { 1L, 2L }, (List<object?>)((IDictionary<string, object?>)outputs["order"]!)["lines"]!);
         Assert.AreEqual("bob", ((IDictionary<string, object?>)outputs["customerDto"]!)["name"]);
         Assert.AreEqual("R-1", outputs["receiptId"], "Output mappings read local variables.");
         Assert.IsFalse(outputs.ContainsKey("receipt"), "Local variables do not leak into the workflow scope.");
-        Assert.AreEqual(HttpStatusCode.NotFound,
-            (await _http.GetAsync($"/engine-rest/external-task/{task.Id}")).StatusCode);
+        Assert.IsNull(await Row(task.Id), "A completed task leaves the table.");
     }
 
     [TestMethod]
@@ -293,25 +291,6 @@ public class CamundaExternalTaskApiTests
     }
 
     [TestMethod]
-    public async Task Query_endpoints_filter_by_topic_and_lock_state()
-    {
-        // Arrange
-        await Seed("charge-card");
-        await Seed("ship-order");
-        await Fetch("w1", "charge-card");
-
-        // Act
-        var locked = await _http.GetFromJsonAsync<JsonArray>("/engine-rest/external-task?locked=true");
-        var byTopic = await _http.GetFromJsonAsync<JsonArray>("/engine-rest/external-task?topicName=ship-order");
-        var topics = await _http.GetFromJsonAsync<List<string>>("/engine-rest/external-task/topic-names");
-
-        // Assert
-        Assert.AreEqual("charge-card", (string?)locked!.Single()!["topicName"]);
-        Assert.AreEqual("ship-order", (string?)byTopic!.Single()!["topicName"]);
-        CollectionAssert.AreEqual(new[] { "charge-card", "ship-order" }, topics);
-    }
-
-    [TestMethod]
     public async Task Late_report_from_a_worker_whose_lock_was_handed_over_is_rejected()
     {
         // Arrange — w1's lock expires and w2 takes the task over.
@@ -351,8 +330,7 @@ public class CamundaExternalTaskApiTests
         // Assert
         Assert.AreEqual(healthy.Id, (string?)tasks.Single()!["id"]);
         await _callback.Received(1).FailActivity("ct1", poison.ActivityInstanceId, Arg.Any<InvalidOperationException>());
-        Assert.AreEqual(HttpStatusCode.NotFound,
-            (await _http.GetAsync($"/engine-rest/external-task/{poison.Id}")).StatusCode);
+        Assert.IsNull(await Row(poison.Id));
     }
 
     [TestMethod]
@@ -381,7 +359,7 @@ public class CamundaExternalTaskApiTests
     }
 
     [TestMethod]
-    public async Task Unlock_and_retries_wait_while_a_result_is_being_reported()
+    public async Task Unlock_waits_while_a_result_is_being_reported()
     {
         // Arrange — w1's complete is in flight inside the engine.
         var task = await Seed("charge-card");
@@ -395,14 +373,12 @@ public class CamundaExternalTaskApiTests
 
         // Act
         var unlock = await _http.PostAsync($"/engine-rest/external-task/{task.Id}/unlock", null);
-        var retries = await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/retries", new { retries = 0 });
         var fetchedByOther = await Fetch("w2", "charge-card");
         engineGate.SetResult();
         var completed = await complete;
 
         // Assert — nothing interfered with the report, and the workflow saw exactly one outcome.
         await AssertError(unlock, HttpStatusCode.InternalServerError, "BadUserRequestException");
-        await AssertError(retries, HttpStatusCode.InternalServerError, "BadUserRequestException");
         Assert.HasCount(0, fetchedByOther);
         Assert.AreEqual(HttpStatusCode.NoContent, completed.StatusCode);
         await _callback.DidNotReceive().FailActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<Exception>());
@@ -425,12 +401,16 @@ public class CamundaExternalTaskApiTests
 
         // Act
         var tasks = await Fetch("w1", "charge-card");
-        var notLocked = await _http.GetFromJsonAsync<JsonArray>("/engine-rest/external-task?notLocked=true");
 
         // Assert — the healthy task is served; the other two are handed back, not left locked.
         Assert.AreEqual(healthy.Id, (string?)tasks.Single()!["id"]);
-        CollectionAssert.AreEquivalent(new[] { transient.Id, poison.Id },
-            notLocked!.Select(t => (string?)t!["id"]).ToArray());
+        foreach (var id in new[] { transient.Id, poison.Id })
+        {
+            var row = await Row(id);
+            Assert.IsNotNull(row);
+            Assert.IsNull(row.WorkerId);
+            Assert.IsNull(row.LockExpirationTime);
+        }
     }
 
     [TestMethod]
@@ -448,7 +428,7 @@ public class CamundaExternalTaskApiTests
         // Assert — failed visibly instead of being handed to another worker after the report lock.
         await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
         await _callback.Received(1).FailActivity("ct1", task.ActivityInstanceId, Arg.Any<InvalidOperationException>());
-        Assert.AreEqual(HttpStatusCode.NotFound, (await _http.GetAsync($"/engine-rest/external-task/{task.Id}")).StatusCode);
+        Assert.IsNull(await Row(task.Id));
     }
 
     [TestMethod]
@@ -488,7 +468,7 @@ public class CamundaExternalTaskApiTests
     }
 
     [TestMethod]
-    public async Task Lock_and_queries_respect_the_retry_backoff()
+    public async Task Lock_respects_the_retry_backoff()
     {
         // Arrange — failed with retries left; waits 60 s before it may run again.
         var task = await Seed("charge-card");
@@ -499,13 +479,11 @@ public class CamundaExternalTaskApiTests
         // Act
         var lockByOther = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/lock",
             new { workerId = "w2", lockDuration = 10_000 });
-        var notLocked = await _http.GetFromJsonAsync<JsonArray>("/engine-rest/external-task?notLocked=true");
-        var locked = await _http.GetFromJsonAsync<JsonArray>("/engine-rest/external-task?locked=true");
+        var fetchedByOther = await Fetch("w2", "charge-card");
 
         // Assert
         await AssertError(lockByOther, HttpStatusCode.BadRequest, "InvalidRequestException");
-        Assert.HasCount(0, notLocked!);
-        Assert.HasCount(1, locked!);
+        Assert.HasCount(0, fetchedByOther);
     }
 
     [TestMethod]
@@ -611,6 +589,15 @@ public class CamundaExternalTaskApiTests
         await db.SaveChangesAsync();
         return entity;
     }
+
+    private async Task<List<ExternalTaskEntity>> Rows()
+    {
+        await using var db = await _app.Services.GetRequiredService<IDbContextFactory<ExternalTaskDbContext>>()
+            .CreateDbContextAsync();
+        return await db.ExternalTasks.AsNoTracking().ToListAsync();
+    }
+
+    private async Task<ExternalTaskEntity?> Row(string id) => (await Rows()).SingleOrDefault(r => r.Id == id);
 
     private async Task<JsonArray> Fetch(
         string workerId, string topic, long lockDuration = 10_000, string[]? variables = null, bool localVariables = false)

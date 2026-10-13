@@ -44,19 +44,6 @@ public static partial class CamundaExternalTaskEndpoints
         group.MapPost("/fetchAndLock", async (FetchExternalTasksDto body, ExternalTaskService service, HttpContext http) =>
             Json(await service.FetchAndLock(body, http.RequestAborted)));
 
-        group.MapGet("/", async (ExternalTaskService service, [AsParameters] ExternalTaskQueryParameters p) =>
-            Json(await service.Query(p.ToQuery())));
-
-        group.MapGet("/count", async (ExternalTaskService service, [AsParameters] ExternalTaskQueryParameters p) =>
-            Json(new CountResultDto(await service.Count(p.ToQuery()))));
-
-        group.MapGet("/topic-names", async (ExternalTaskService service,
-                bool? withLockedTasks, bool? withUnlockedTasks, bool? withRetriesLeft) =>
-            Json(await service.TopicNames(withLockedTasks ?? false, withUnlockedTasks ?? false, withRetriesLeft ?? false)));
-
-        group.MapGet("/{id}", async (string id, ExternalTaskService service) =>
-            Json(await service.Get(id)));
-
         group.MapPost("/{id}/complete", async (string id, CompleteExternalTaskDto body, ExternalTaskService service) =>
         {
             await service.Complete(id, body);
@@ -93,18 +80,6 @@ public static partial class CamundaExternalTaskEndpoints
             return Results.NoContent();
         });
 
-        group.MapPut("/{id}/retries", async (string id, RetriesDto body, ExternalTaskService service) =>
-        {
-            await service.SetRetries(id, body);
-            return Results.NoContent();
-        });
-
-        group.MapPut("/{id}/priority", async (string id, PriorityDto body, ExternalTaskService service) =>
-        {
-            await service.SetPriority(id, body);
-            return Results.NoContent();
-        });
-
         return group;
     }
 
@@ -119,28 +94,4 @@ public static partial class CamundaExternalTaskEndpoints
     [LoggerMessage(EventId = 9355, Level = LogLevel.Error,
         Message = "Camunda external-task request {Path} failed")]
     private static partial void LogUnhandled(ILogger logger, Exception ex, string path);
-
-    /// <summary>Query-string filters of <c>GET /external-task</c> (Camunda parameter names).</summary>
-    public sealed class ExternalTaskQueryParameters
-    {
-        public string? ExternalTaskId { get; init; }
-        public string? TopicName { get; init; }
-        public string? WorkerId { get; init; }
-        public bool? Locked { get; init; }
-        public bool? NotLocked { get; init; }
-        public bool? WithRetriesLeft { get; init; }
-        public bool? NoRetriesLeft { get; init; }
-        public string? ProcessInstanceId { get; init; }
-        public string? ActivityId { get; init; }
-        public string? ProcessDefinitionId { get; init; }
-        public string? ProcessDefinitionKey { get; init; }
-        public int? FirstResult { get; init; }
-        public int? MaxResults { get; init; }
-
-        public ExternalTaskQuery ToQuery() => new(
-            ExternalTaskId, TopicName, WorkerId,
-            Locked ?? false, NotLocked ?? false, WithRetriesLeft ?? false, NoRetriesLeft ?? false,
-            ProcessInstanceId, ActivityId, ProcessDefinitionId, ProcessDefinitionKey,
-            FirstResult, MaxResults);
-    }
 }

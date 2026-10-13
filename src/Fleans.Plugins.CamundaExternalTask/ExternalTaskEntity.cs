@@ -41,7 +41,6 @@ public sealed class ExternalTaskEntity
 
     public string? ErrorMessage { get; set; }
     public string? ErrorDetails { get; set; }
-    public long Priority { get; set; }
 
     /// <summary>UTC.</summary>
     public DateTime CreateTime { get; set; }

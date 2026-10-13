@@ -14,7 +14,7 @@ public class PostgresCamundaExternalTaskApiTests : CamundaExternalTaskApiTests
 {
     private static readonly Lazy<Task<PostgreSqlContainer>> Container = new(async () =>
     {
-        var container = new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
+        var container = new PostgreSqlBuilder("postgres:16-alpine").Build();
         await container.StartAsync();
         return container;
     });

@@ -99,8 +99,7 @@ name, it fails with `network fleans_default declared as external, but could not 
 | `Orleans__ClusterId`, `Orleans__ServiceId` | *required* | The engine's cluster ids. |
 | `ConnectionStrings__camunda-external-tasks` | *required* | Database for the `camunda_external_tasks` table. The database and table are created at startup. |
 | `CamundaExternalTasks__Provider` | `Postgres` | `Postgres` or `Sqlite`. Use PostgreSQL with more than one replica. |
-| `CamundaExternalTasks__BasePath` | `/engine-rest` | Route prefix. |
-| `Fleans__Streaming__QueueCount` | `8` | Must equal the engine's Redis stream queue count. |
+| `Fleans__Streaming__Redis__TotalQueueCount` | `8` | The same setting the engine reads. Set it to the same value as the engine, or stream events land on queues this host doesn't read. |
 
 Only the Redis stream provider (the engine's default) is supported by this host. The endpoints
 are anonymous. Put the host behind your gateway, or fork `Program.cs` and add authentication.
@@ -127,15 +126,15 @@ new Client({ baseUrl: "http://camunda-external-task:8080/engine-rest" });
 
 ## Supported endpoints
 
+These are the endpoints the official Java and JS external-task clients call:
+
 | Endpoint | Notes |
 |---|---|
-| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
+| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
 | `POST /external-task/{id}/complete` | `variables` go to the workflow scope. `localVariables` are visible only to output mappings. |
 | `POST /external-task/{id}/failure` | `retries > 0`: the task is fetchable again after `retryTimeout`. `retries = 0`: the activity fails. |
 | `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. |
 | `POST /external-task/{id}/extendLock`, `/lock`, `/unlock` | Same semantics as Camunda. |
-| `PUT /external-task/{id}/retries`, `/priority` | Setting retries to `0` fails the activity. |
-| `GET /external-task`, `/count`, `/{id}`, `/topic-names` | Filters: `topicName`, `workerId`, `locked`, `notLocked`, `withRetriesLeft`, `noRetriesLeft`, `processInstanceId`, `activityId`, `processDefinitionId`, `processDefinitionKey`, `firstResult`, `maxResults`. |
 
 Errors use Camunda's `{ "type", "message" }` body and status codes:
 - `404` for an unknown task, including a task whose activity already ended, for example cancelled or interrupted by a boundary event. A worker that reports on such a task learns its result was not applied.
@@ -160,8 +159,11 @@ the bare `application/json` content type, the only one the JS client parses.
   fetch filters on them are ignored.
 - **Stale tasks:** a task whose activity ended without a worker (cancelled, or interrupted by a
   boundary event) is removed the next time a worker fetches from its topic.
-- **Scope:** only `/external-task`. Start processes and correlate messages through the
-  [Fleans REST API](https://nightbaker.github.io/fleans/reference/api/).
+- **Scope:** only the worker-facing endpoints above. The operator endpoints (`GET /external-task`,
+  `/count`, `/topic-names`, `PUT /retries`, `PUT /priority`) are not provided. Tasks have no
+  priority, so `usePriority` is accepted but has no effect. Both are tracked in
+  [issue #1](https://github.com/nightBaker/fleans-camunda-external-task/issues/1). Start processes
+  and correlate messages through the [Fleans REST API](https://nightbaker.github.io/fleans/reference/api/).
 - **Rejected results:** if the engine refuses a `complete` outright (for example, outputs it cannot
   store), the activity is failed and the worker gets `400`. This is the same rule Fleans applies to
   its other plugins. A transient engine error returns `500`, and the worker can send `complete` again.

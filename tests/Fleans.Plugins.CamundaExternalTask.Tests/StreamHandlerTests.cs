@@ -67,7 +67,7 @@ public class StreamHandlerTests
         Assert.AreEqual("charge-card", task.TopicName);
         Assert.AreEqual(42, task.Variables["toCharge"].Value);
         Assert.Contains($"complete:{evt.ActivityId}:charged=True", FakeWorkflowInstance.Calls);
-        Assert.AreEqual(0L, await Service.Count(new ExternalTaskQuery(ProcessInstanceId: instanceId.ToString("D"))));
+        Assert.AreEqual(0, await RowCount(instanceId));
     }
 
     [TestMethod]
@@ -97,7 +97,7 @@ public class StreamHandlerTests
         await Task.Delay(1000); // nothing observable to wait for — give the stream time to deliver
 
         // Assert
-        Assert.AreEqual(0L, await Service.Count(new ExternalTaskQuery(ProcessInstanceId: instanceId.ToString("D"))));
+        Assert.AreEqual(0, await RowCount(instanceId));
         Assert.IsTrue(FakeWorkflowInstance.Checked.Contains(evt.ActivityInstanceId), "The event reached the handler.");
     }
 
@@ -113,9 +113,8 @@ public class StreamHandlerTests
         await Publish(evt);
 
         // Assert
-        var query = new ExternalTaskQuery(ProcessInstanceId: instanceId.ToString("D"));
-        await WaitUntil(async () => await Service.Count(query) == 1 && FakeWorkflowInstance.CheckCount(evt.ActivityInstanceId) == 2);
-        Assert.AreEqual(1L, await Service.Count(query));
+        await WaitUntil(async () => await RowCount(instanceId) == 1 && FakeWorkflowInstance.CheckCount(evt.ActivityInstanceId) == 2);
+        Assert.AreEqual(1, await RowCount(instanceId));
     }
 
     private static (Guid InstanceId, ExecuteCustomTaskEvent Event) NewTask(string topic, List<InputMapping>? inputs = null)
@@ -143,8 +142,15 @@ public class StreamHandlerTests
         await stream.OnNextAsync(evt);
     }
 
+    private static async Task<int> RowCount(Guid instanceId)
+    {
+        await using var db = await ((InProcessSiloHandle)_cluster.Primary).SiloHost.Services
+            .GetRequiredService<IDbContextFactory<ExternalTaskDbContext>>().CreateDbContextAsync();
+        return await db.ExternalTasks.CountAsync(t => t.WorkflowInstanceId == instanceId);
+    }
+
     private static FetchExternalTasksDto Fetch(string topic) =>
-        new("w1", MaxTasks: 1, UsePriority: false, AsyncResponseTimeout: 10_000,
+        new("w1", MaxTasks: 1, AsyncResponseTimeout: 10_000,
             [new FetchExternalTaskTopicDto(topic, 60_000, null, false, null, null, null, null)]);
 
     private static async Task WaitUntil(Func<Task<bool>> condition)

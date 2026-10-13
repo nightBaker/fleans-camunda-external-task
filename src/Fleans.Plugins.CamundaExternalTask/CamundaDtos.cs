@@ -2,7 +2,8 @@ namespace Fleans.Plugins.CamundaExternalTask;
 
 // Request/response shapes of the Camunda 7 REST API (/engine-rest/external-task). Property names
 // serialize camelCase, matching Camunda. Request properties a Fleans deployment cannot honour
-// (businessKey, tenantId, variable filters, …) are accepted and ignored by the JSON binder.
+// (usePriority, businessKey, tenantId, variable filters, …) are accepted and ignored by the
+// JSON binder. Fields with no Fleans equivalent are returned as null / 0 (see issue #1).
 
 /// <summary>Camunda typed value: <c>{ "value": …, "type": "String", "valueInfo": {} }</c>.</summary>
 public sealed record VariableValueDto(object? Value, string? Type, Dictionary<string, object?>? ValueInfo);
@@ -10,7 +11,6 @@ public sealed record VariableValueDto(object? Value, string? Type, Dictionary<st
 public sealed record FetchExternalTasksDto(
     string? WorkerId,
     int MaxTasks,
-    bool UsePriority,
     long? AsyncResponseTimeout,
     List<FetchExternalTaskTopicDto>? Topics);
 
@@ -46,34 +46,7 @@ public sealed record ExtendLockDto(string? WorkerId, long NewDuration);
 
 public sealed record LockExternalTaskDto(string? WorkerId, long LockDuration);
 
-public sealed record RetriesDto(int? Retries);
-
-public sealed record PriorityDto(long Priority);
-
-public sealed record CountResultDto(long Count);
-
 public sealed record CamundaErrorDto(string Type, string Message);
-
-/// <summary>Response of <c>GET /external-task/{id}</c> and list queries.</summary>
-public record ExternalTaskDto(
-    string Id,
-    string TopicName,
-    string? WorkerId,
-    string? LockExpirationTime,
-    string? CreateTime,
-    string ActivityId,
-    string ActivityInstanceId,
-    string ExecutionId,
-    string ProcessInstanceId,
-    string? ProcessDefinitionId,
-    string ProcessDefinitionKey,
-    string? ProcessDefinitionVersionTag,
-    int? Retries,
-    string? ErrorMessage,
-    bool Suspended,
-    string? TenantId,
-    long Priority,
-    string? BusinessKey);
 
 /// <summary>Element of the <c>fetchAndLock</c> response.</summary>
 public sealed record LockedExternalTaskDto(
