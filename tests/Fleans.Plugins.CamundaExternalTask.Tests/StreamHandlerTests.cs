@@ -269,14 +269,14 @@ public sealed class FakeWorkflowInstance : Grain, IWorkflowInstanceCallback
     public Task CompleteActivity(string activityId, Guid activityInstanceId, ExpandoObject variables)
     {
         ActiveActivities.TryRemove(activityInstanceId, out _);
-        var values = string.Join(",", ((IDictionary<string, object?>)variables).Select(kv => $"{kv.Key}={kv.Value}"));
+        var values = variables is null ? "" : string.Join(",", ((IDictionary<string, object?>)variables).Select(kv => $"{kv.Key}={kv.Value}"));
         Calls.Add($"complete:{activityId}:{values}");
         return Task.CompletedTask;
     }
 
-    public Task FailActivity(string activityId, Guid activityInstanceId, Exception exception, ExpandoObject variables)
+    public Task FailActivity(string activityId, Guid activityInstanceId, Exception exception, ExpandoObject? variables)
     {
-        var values = string.Join(",", ((IDictionary<string, object?>)variables).Select(kv => $"{kv.Key}={kv.Value}"));
+        var values = variables is null ? "" : string.Join(",", ((IDictionary<string, object?>)variables).Select(kv => $"{kv.Key}={kv.Value}"));
         if (values.Length > 0)
             Calls.Add($"fail-vars:{activityId}:{values}");
         return FailActivity(activityId, activityInstanceId, exception);
