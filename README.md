@@ -54,6 +54,29 @@ Camunda's `<camunda:inputOutput>` is not read. Use Fleans
 instead: inputs appear to the worker as local variables, and outputs read the variables the
 worker sends on `complete`.
 
+### Task priority
+
+Camunda's `camunda:taskPriority` attribute becomes the reserved input `taskPriority`:
+
+```xml
+<!-- Camunda 7 -->
+<bpmn:serviceTask id="ship" camunda:type="external" camunda:topic="ship-order" camunda:taskPriority="${order.priority}" />
+<!-- Fleans -->
+<bpmn:serviceTask id="ship" type="camunda:ship-order">
+  <bpmn:extensionElements>
+    <zeebe:ioMapping>
+      <zeebe:input source="=order.priority" target="taskPriority" />   <!-- or a literal: source="=10" -->
+    </zeebe:ioMapping>
+  </bpmn:extensionElements>
+</bpmn:serviceTask>
+```
+
+The source is a literal or a path over the workflow variables. It is evaluated once, when
+the task is queued, and must give a whole number. Otherwise the activity fails with error
+code `400`. Without the input, the priority is `0`. `taskPriority` sets the priority
+only and is not sent to the worker as a variable. Workers that fetch with `usePriority: true`
+get the highest priority first, then the oldest. The Java and JS clients send that by default.
+
 ## 2. Run the plugin host
 
 The host joins the engine's Orleans cluster through the engine's Redis and serves the API on port 8080.
@@ -137,11 +160,12 @@ These are the endpoints the official Java and JS external-task clients call:
 
 | Endpoint | Notes |
 |---|---|
-| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
+| `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `processDefinitionId(In)`, `processDefinitionKey(In)`. |
 | `POST /external-task/{id}/complete` | `variables` go to the workflow scope. `localVariables` are visible only to output mappings. |
 | `POST /external-task/{id}/failure` | `retries > 0`: the task is fetchable again after `retryTimeout`. `retries = 0`: the activity fails. |
 | `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. |
 | `POST /external-task/{id}/extendLock`, `/lock`, `/unlock` | Same semantics as Camunda. |
+| `PUT /external-task/{id}/priority` | Operator override of the priority from the BPMN. Takes effect on the next fetch. |
 
 Errors use Camunda's `{ "type", "message" }` body and status codes:
 - `404` for an unknown task, including a task whose activity already ended, for example cancelled or interrupted by a boundary event. A worker that reports on such a task learns its result was not applied.
@@ -166,19 +190,21 @@ the bare `application/json` content type, the only one the JS client parses.
   fetch filters on them are ignored.
 - **Stale tasks:** a task whose activity ended without a worker (cancelled, or interrupted by a
   boundary event) is removed the next time a worker fetches from its topic.
-- **Scope:** only the worker-facing endpoints above. The operator endpoints (`GET /external-task`,
-  `/count`, `/topic-names`, `PUT /retries`, `PUT /priority`) are not provided. Tasks have no
-  priority, so `usePriority` is accepted but has no effect. Both are tracked in
+- **Scope:** the worker-facing endpoints above, plus `PUT /priority`. The other operator
+  endpoints (`GET /external-task`, `/count`, `/topic-names`, `PUT /retries`) are not provided.
+  They are tracked in
   [issue #1](https://github.com/nightBaker/fleans-camunda-external-task/issues/1). Start processes
   and correlate messages through the [Fleans REST API](https://nightbaker.github.io/fleans/reference/api/).
 - **Rejected results:** if the engine refuses a `complete` outright (for example, outputs it cannot
   store), the activity is failed and the worker gets `400`. This is the same rule Fleans applies to
   its other plugins. A transient engine error returns `500`, and the worker can send `complete` again.
+- **Priority** comes from the `taskPriority` input (see [Task priority](#task-priority)), not
+  from `camunda:taskPriority`. Process-level `camunda:taskPriority` defaults are not read.
 - **Clocks:** lock expiry uses each replica's clock, so keep replicas NTP-synced.
 - **Long polling** wakes up immediately when a task becomes available on the same replica. Tasks
   that appear on another replica are found by a re-check every 2 seconds.
 
-Logs use EventIds 9350–9369: 9350 queued, 9360 locked, 9361 completed, 9362 failure with
+Logs use EventIds 9350–9369: 9350 queued, 9356 invalid task priority, 9357 priority changed, 9360 locked, 9361 completed, 9362 failure with
 retries left, 9363 retries exhausted, 9364 BPMN error, 9365 stale task removed, 9367 task could
 not be handed out, 9368 result rejected by the workflow.
 

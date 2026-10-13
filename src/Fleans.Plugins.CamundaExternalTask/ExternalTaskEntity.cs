@@ -24,6 +24,9 @@ public sealed class ExternalTaskEntity
     /// <summary>JSON array of <c>{source,target}</c> output mappings from the BPMN.</summary>
     public required string OutputMappingsJson { get; set; }
 
+    /// <summary>Higher is fetched first when a worker asks for <c>usePriority</c>. See <see cref="ExternalTaskPriority"/>.</summary>
+    public long Priority { get; set; }
+
     public string? WorkerId { get; set; }
 
     /// <summary>UTC. Fetchable when null or in the past.</summary>

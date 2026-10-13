@@ -70,7 +70,7 @@ public sealed partial class ExternalTaskService(
         while (true)
         {
             var wake = signal.Next; // before the query, so a task queued during it is not missed
-            var locked = await TryFetchAndLock(workerId, request.MaxTasks, topics, ct);
+            var locked = await TryFetchAndLock(workerId, request.MaxTasks, topics, request.UsePriority, ct);
             var remaining = deadline - timeProvider.GetUtcNow();
             if (locked.Count > 0 || remaining <= TimeSpan.Zero)
                 return locked;
@@ -85,7 +85,7 @@ public sealed partial class ExternalTaskService(
     }
 
     private async Task<List<LockedExternalTaskDto>> TryFetchAndLock(
-        string workerId, int maxTasks, List<FetchExternalTaskTopicDto> topics, CancellationToken ct)
+        string workerId, int maxTasks, List<FetchExternalTaskTopicDto> topics, bool usePriority, CancellationToken ct)
     {
         var result = new List<LockedExternalTaskDto>();
         if (maxTasks == 0 || topics.Count == 0) return result;
@@ -102,14 +102,19 @@ public sealed partial class ExternalTaskService(
                 var candidates = new List<(ExternalTaskEntity Task, FetchExternalTaskTopicDto Topic)>();
                 foreach (var topic in topics)
                 {
-                    var rows = await Available(db, topic, now, skipped).OrderBy(t => t.CreateTime).Take(want).ToListAsync(ct);
+                    var available = Available(db, topic, now, skipped);
+                    var ordered = usePriority
+                        ? available.OrderByDescending(t => t.Priority).ThenBy(t => t.CreateTime)
+                        : available.OrderBy(t => t.CreateTime);
+                    var rows = await ordered.Take(want).ToListAsync(ct);
                     candidates.AddRange(rows.Select(r => (r, topic)));
                 }
                 if (candidates.Count == 0) break;
 
-                // Oldest first across topics. usePriority is accepted but has no effect: tasks have no
-                // priority yet (see issue #1).
-                var batch = candidates.OrderBy(c => c.Task.CreateTime)
+                // Same order across topics: highest priority first with usePriority, then oldest first.
+                var batch = (usePriority
+                        ? candidates.OrderByDescending(c => c.Task.Priority).ThenBy(c => c.Task.CreateTime)
+                        : candidates.OrderBy(c => c.Task.CreateTime))
                     .DistinctBy(c => c.Task.Id)
                     .Take(want);
                 foreach (var (candidate, topic) in batch)
@@ -225,7 +230,8 @@ public sealed partial class ExternalTaskService(
     {
         var all = (IDictionary<string, object?>)processVariables;
         var locals = new Dictionary<string, object?>(StringComparer.Ordinal);
-        foreach (var mapping in Deserialize<InputMapping>(task.InputMappingsJson))
+        foreach (var mapping in Deserialize<InputMapping>(task.InputMappingsJson)
+                     .Where(m => m.Target != ExternalTaskPriority.InputTarget)) // read at queue time, not a variable
             locals[mapping.Target] = MappingResolver.Resolve(mapping.Source, all);
 
         var visible = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -254,7 +260,7 @@ public sealed partial class ExternalTaskService(
             ErrorMessage: task.ErrorMessage,
             ErrorDetails: task.ErrorDetails,
             TenantId: null,
-            Priority: 0,
+            Priority: task.Priority,
             BusinessKey: null,
             Variables: CamundaVariables.ToCamundaVariables(selected),
             ExtensionProperties: new Dictionary<string, string>());
@@ -396,6 +402,22 @@ public sealed partial class ExternalTaskService(
         if (updated == 0)
             throw await Rejected(id, null, "unlocked");
         signal.Pulse();
+    }
+
+    /// <summary>
+    /// Operator override of the priority evaluated from the BPMN. Takes effect on the next fetch;
+    /// a worker already holding the task keeps it.
+    /// </summary>
+    public async Task SetPriority(string id, PriorityDto request)
+    {
+        if (request.Priority is not { } priority)
+            throw BadRequest("priority is required.");
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var updated = await db.ExternalTasks.Where(t => t.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.Priority, priority));
+        if (updated == 0)
+            throw NotFound(id);
+        LogPriorityChanged(id, priority);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -617,6 +639,10 @@ public sealed partial class ExternalTaskService(
     [LoggerMessage(EventId = 9369, Level = LogLevel.Warning,
         Message = "Releasing external task {ExternalTaskId} failed; its lock expires on its own")]
     private partial void LogReleaseFailed(Exception ex, string externalTaskId);
+
+    [LoggerMessage(EventId = 9357, Level = LogLevel.Information,
+        Message = "External task {ExternalTaskId} priority set to {Priority}")]
+    private partial void LogPriorityChanged(string externalTaskId, long priority);
 
     [LoggerMessage(EventId = 9366, Level = LogLevel.Warning,
         Message = "BPMN error for external task {ExternalTaskId} carried {Count} variable(s); Fleans ignores variables on BPMN errors")]

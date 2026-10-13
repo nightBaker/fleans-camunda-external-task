@@ -2,8 +2,8 @@ namespace Fleans.Plugins.CamundaExternalTask;
 
 // Request/response shapes of the Camunda 7 REST API (/engine-rest/external-task). Property names
 // serialize camelCase, matching Camunda. Request properties a Fleans deployment cannot honour
-// (usePriority, businessKey, tenantId, variable filters, …) are accepted and ignored by the
-// JSON binder. Fields with no Fleans equivalent are returned as null / 0 (see issue #1).
+// (businessKey, tenantId, variable filters, …) are accepted and ignored by the JSON binder.
+// Fields with no Fleans equivalent are returned as null (see issue #1).
 
 /// <summary>Camunda typed value: <c>{ "value": …, "type": "String", "valueInfo": {} }</c>.</summary>
 public sealed record VariableValueDto(object? Value, string? Type, Dictionary<string, object?>? ValueInfo);
@@ -12,7 +12,10 @@ public sealed record FetchExternalTasksDto(
     string? WorkerId,
     int MaxTasks,
     long? AsyncResponseTimeout,
-    List<FetchExternalTaskTopicDto>? Topics);
+    List<FetchExternalTaskTopicDto>? Topics,
+    bool UsePriority = false);
+
+public sealed record PriorityDto(long? Priority);
 
 public sealed record FetchExternalTaskTopicDto(
     string TopicName,
