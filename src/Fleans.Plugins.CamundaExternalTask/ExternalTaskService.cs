@@ -194,6 +194,15 @@ public sealed partial class ExternalTaskService(
             q = q.Where(t => t.ProcessDefinitionId == definitionId);
         if (topic.ProcessDefinitionIdIn is { Count: > 0 } definitionIds)
             q = q.Where(t => t.ProcessDefinitionId != null && definitionIds.Contains(t.ProcessDefinitionId));
+        if (topic.BusinessKey is { } businessKey)
+            q = q.Where(t => t.BusinessKey == businessKey);
+        // As in Camunda, tenantIdIn and withoutTenantId together match either.
+        if (topic.TenantIdIn is { Count: > 0 } tenants)
+            q = topic.WithoutTenantId
+                ? q.Where(t => t.TenantId == null || tenants.Contains(t.TenantId))
+                : q.Where(t => t.TenantId != null && tenants.Contains(t.TenantId));
+        else if (topic.WithoutTenantId)
+            q = q.Where(t => t.TenantId == null);
         return q;
     }
 
@@ -272,8 +281,6 @@ public sealed partial class ExternalTaskService(
         var extensionProperties = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var mapping in Deserialize<InputMapping>(task.InputMappingsJson))
         {
-            if (mapping.Target == ExternalTaskPriority.InputTarget)
-                continue; // read at queue time, not a variable
             if (mapping.Target.StartsWith(ExtensionPropertyPrefix, StringComparison.Ordinal))
             {
                 if (topic.IncludeExtensionProperties
@@ -282,6 +289,8 @@ public sealed partial class ExternalTaskService(
                         Convert.ToString(property, CultureInfo.InvariantCulture) ?? "";
                 continue;
             }
+            if (ReservedInputs.IsReserved(mapping.Target))
+                continue; // task metadata read at queue time, not a variable
             locals[mapping.Target] = MappingResolver.Resolve(mapping.Source, all);
         }
 
@@ -310,9 +319,9 @@ public sealed partial class ExternalTaskService(
             Retries: task.Retries,
             ErrorMessage: task.ErrorMessage,
             ErrorDetails: task.ErrorDetails,
-            TenantId: null,
+            TenantId: task.TenantId,
             Priority: task.Priority,
-            BusinessKey: null,
+            BusinessKey: task.BusinessKey,
             Variables: CamundaVariables.ToCamundaVariables(selected),
             ExtensionProperties: extensionProperties);
     }

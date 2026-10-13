@@ -70,34 +70,47 @@ internal sealed class ExternalTaskSchemaInitializer(IDbContextFactory<ExternalTa
             .Replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", StringComparison.Ordinal);
         await db.Database.ExecuteSqlRawAsync(script, cancellationToken);
-        await AddPriorityColumn(db, cancellationToken);
+        await AddMissingColumns(db, cancellationToken);
     }
 
-    /// <summary>
-    /// Tables created by 0.6.0 have no <see cref="ExternalTaskEntity.Priority"/> column, and
-    /// <c>CREATE TABLE IF NOT EXISTS</c> leaves an existing table as it is. A replica that loses
-    /// the race to add it fails here, retries, and finds the column.
-    /// </summary>
-    private static async Task AddPriorityColumn(ExternalTaskDbContext db, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await db.ExternalTasks.Select(t => t.Priority).FirstOrDefaultAsync(cancellationToken);
-            return;
-        }
-        catch (DbException)
-        {
-            // Column missing — add it below.
-        }
+    /// <summary>Columns added after 0.6.0, the first release, in the order they were added.</summary>
+    private static readonly string[] AddedColumns =
+    [
+        nameof(ExternalTaskEntity.Priority),
+        nameof(ExternalTaskEntity.BusinessKey),
+        nameof(ExternalTaskEntity.TenantId),
+    ];
 
+    /// <summary>
+    /// <c>CREATE TABLE IF NOT EXISTS</c> leaves an older table as it is, so columns added since
+    /// 0.6.0 are added here. A replica that loses the race to add one fails, retries, and finds it.
+    /// </summary>
+    private static async Task AddMissingColumns(ExternalTaskDbContext db, CancellationToken cancellationToken)
+    {
         var entity = db.Model.FindEntityType(typeof(ExternalTaskEntity))!;
-        var priority = entity.FindProperty(nameof(ExternalTaskEntity.Priority))!;
         var table = StoreObjectIdentifier.Table(ExternalTaskDbContext.TableName, entity.GetSchema());
         var sql = db.GetService<ISqlGenerationHelper>();
-        await db.Database.ExecuteSqlRawAsync(
-            $"ALTER TABLE {sql.DelimitIdentifier(ExternalTaskDbContext.TableName, entity.GetSchema())} " +
-            $"ADD COLUMN {sql.DelimitIdentifier(priority.GetColumnName(table)!)} {priority.GetColumnType()} NOT NULL DEFAULT 0",
-            cancellationToken);
+        var tableName = sql.DelimitIdentifier(ExternalTaskDbContext.TableName, entity.GetSchema());
+        foreach (var name in AddedColumns)
+        {
+            var property = entity.FindProperty(name)!;
+            var column = sql.DelimitIdentifier(property.GetColumnName(table)!);
+            try
+            {
+                // Qualified: SQLite reads an unknown bare "name" as a string literal, not an error.
+                await db.Database.ExecuteSqlRawAsync($"SELECT t.{column} FROM {tableName} t WHERE 1 = 0", cancellationToken);
+                continue;
+            }
+            catch (DbException)
+            {
+                // Column missing — add it below.
+            }
+
+            var nullability = property.IsNullable ? "NULL" : "NOT NULL DEFAULT 0";
+            await db.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE {tableName} ADD COLUMN {column} {property.GetColumnType()} {nullability}",
+                cancellationToken);
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

@@ -75,14 +75,18 @@ public sealed partial class CamundaExternalTaskHandler(
         if (await db.ExternalTasks.AnyAsync(t => t.Id == id))
             return; // redelivered while still waiting — the row (and its priority) is already there
 
+        var scope = (IDictionary<string, object?>)variables;
         long priority;
+        string? businessKey, tenantId;
         try
         {
-            priority = ExternalTaskPriority.Evaluate(item.InputMappings, (IDictionary<string, object?>)variables);
+            priority = ExternalTaskPriority.Evaluate(item.InputMappings, scope);
+            businessKey = ReservedInputs.EvaluateString(item.InputMappings, ReservedInputs.BusinessKey, scope);
+            tenantId = ReservedInputs.EvaluateString(item.InputMappings, ReservedInputs.TenantId, scope);
         }
         catch (CustomTaskFailedActivityException ex)
         {
-            // Deterministic (not a number, broken path): a redelivery would fail the same way.
+            // Deterministic (priority not a number, broken path): a redelivery would fail the same way.
             LogPriorityFailed(ex, item.ActivityId);
             await callback.FailActivity(item.ActivityId, item.ActivityInstanceId, ex);
             return;
@@ -101,6 +105,8 @@ public sealed partial class CamundaExternalTaskHandler(
             InputMappingsJson = JsonSerializer.Serialize(item.InputMappings),
             OutputMappingsJson = JsonSerializer.Serialize(item.OutputMappings),
             Priority = priority,
+            BusinessKey = businessKey,
+            TenantId = tenantId,
             CreateTime = timeProvider.GetUtcNow().UtcDateTime,
         });
         try
@@ -144,7 +150,7 @@ public sealed partial class CamundaExternalTaskHandler(
     private partial void LogActiveCheckFailed(Exception ex, string activityId);
 
     [LoggerMessage(EventId = 9356, Level = LogLevel.Error,
-        Message = "Task priority of Camunda external-task activity {ActivityId} is invalid — failing the activity")]
+        Message = "Task priority, business key or tenant id of Camunda external-task activity {ActivityId} is invalid — failing the activity")]
     private partial void LogPriorityFailed(Exception ex, string activityId);
 
     [LoggerMessage(EventId = 9353, Level = LogLevel.Error,

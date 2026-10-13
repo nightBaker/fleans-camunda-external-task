@@ -142,6 +142,27 @@ public class StreamHandlerTests
     }
 
     [TestMethod]
+    public async Task Business_key_and_tenant_id_are_evaluated_when_the_task_is_queued()
+    {
+        // Arrange
+        var (instanceId, evt) = NewTask("bill-order", inputs:
+        [
+            new InputMapping("=order.id", ReservedInputs.BusinessKey),
+            new InputMapping("acme", ReservedInputs.TenantId),
+        ]);
+        FakeWorkflowInstance.Activate(evt.ActivityInstanceId, ("order", new Dictionary<string, object?> { ["id"] = 1001L }));
+
+        // Act
+        await Publish(evt);
+        await WaitUntil(async () => await RowCount(instanceId) == 1);
+        var task = (await Service.FetchAndLock(Fetch("bill-order"), default)).Single();
+
+        // Assert
+        Assert.AreEqual("1001", task.BusinessKey);
+        Assert.AreEqual("acme", task.TenantId);
+    }
+
+    [TestMethod]
     public async Task Priority_that_is_not_a_number_fails_the_activity()
     {
         // Arrange

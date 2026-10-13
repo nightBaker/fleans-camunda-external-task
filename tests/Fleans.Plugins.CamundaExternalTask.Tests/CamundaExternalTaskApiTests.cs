@@ -676,20 +676,24 @@ public class CamundaExternalTaskApiTests
     }
 
     [TestMethod]
-    public async Task Schema_initializer_adds_the_priority_column_to_a_table_from_0_6_0()
+    public async Task Schema_initializer_adds_the_columns_missing_from_a_0_6_0_table()
     {
         // Arrange — a table created by 0.6.0, before tasks had a priority.
         var factory = _app.Services.GetRequiredService<IDbContextFactory<ExternalTaskDbContext>>();
         await using (var db = await factory.CreateDbContextAsync())
-            await db.Database.ExecuteSqlRawAsync(
-                $"ALTER TABLE {ExternalTaskDbContext.TableName} DROP COLUMN \"Priority\"");
+            foreach (var column in new[] { "Priority", "BusinessKey", "TenantId" })
+                await db.Database.ExecuteSqlRawAsync(
+                    $"ALTER TABLE {ExternalTaskDbContext.TableName} DROP COLUMN \"{column}\"");
 
         // Act
         await new ExternalTaskSchemaInitializer(factory).StartAsync(CancellationToken.None);
 
         // Assert
-        var task = await Seed("charge-card", priority: 3);
-        Assert.AreEqual(3L, (await Row(task.Id))!.Priority);
+        var task = await Seed("charge-card", priority: 3, businessKey: "order-1", tenantId: "acme");
+        var row = (await Row(task.Id))!;
+        Assert.AreEqual(3L, row.Priority);
+        Assert.AreEqual("order-1", row.BusinessKey);
+        Assert.AreEqual("acme", row.TenantId);
     }
 
     [TestMethod]
@@ -772,6 +776,59 @@ public class CamundaExternalTaskApiTests
         CollectionAssert.AreEquivalent(new[] { "who" }, Names(with[0]!["variables"]!));
     }
 
+    [TestMethod]
+    public async Task BusinessKey_and_tenantId_are_returned_and_filter_the_fetch()
+    {
+        // Arrange
+        var acme = await Seed("charge-card", businessKey: "order-1", tenantId: "acme");
+        var globex = await Seed("charge-card", businessKey: "order-2", tenantId: "globex");
+        var noTenant = await Seed("charge-card", businessKey: "order-1");
+
+        // Act
+        var byKey = await FetchFiltered(new { businessKey = "order-1" });
+        var byTenant = await FetchFiltered(new { tenantIdIn = new[] { "globex" } });
+        var withoutTenant = await FetchFiltered(new { withoutTenantId = true });
+        var either = await FetchFiltered(new { tenantIdIn = new[] { "acme" }, withoutTenantId = true });
+
+        // Assert
+        CollectionAssert.AreEquivalent(new[] { acme.Id, noTenant.Id }, Ids(byKey));
+        CollectionAssert.AreEqual(new[] { globex.Id }, Ids(byTenant));
+        Assert.AreEqual("order-2", (string?)byTenant[0]!["businessKey"]);
+        Assert.AreEqual("globex", (string?)byTenant[0]!["tenantId"]);
+        CollectionAssert.AreEqual(new[] { noTenant.Id }, Ids(withoutTenant));
+        CollectionAssert.AreEquivalent(new[] { acme.Id, noTenant.Id }, Ids(either));
+    }
+
+    [TestMethod]
+    public async Task Reserved_inputs_are_not_sent_as_variables()
+    {
+        await Seed("charge-card", inputs:
+        [
+            new InputMapping("=customer", ReservedInputs.BusinessKey),
+            new InputMapping("acme", ReservedInputs.TenantId),
+            new InputMapping("=customer", "who"),
+        ]);
+
+        var tasks = await Fetch("w1", "charge-card", localVariables: true);
+
+        CollectionAssert.AreEquivalent(new[] { "who" }, Names(tasks[0]!["variables"]!));
+    }
+
+    /// <summary>Fetches with the given topic filters, then unlocks what it got.</summary>
+    private async Task<JsonArray> FetchFiltered(object filters)
+    {
+        var topic = JsonSerializer.SerializeToNode(filters)!.AsObject();
+        topic["topicName"] = "charge-card";
+        topic["lockDuration"] = 10_000;
+        var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock",
+            new JsonObject { ["workerId"] = "w1", ["maxTasks"] = 10, ["topics"] = new JsonArray(topic) });
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, await response.Content.ReadAsStringAsync());
+        var tasks = JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsArray();
+        foreach (var id in Ids(tasks))
+            await _http.PostAsync($"/engine-rest/external-task/{id}/unlock", null);
+        return tasks;
+    }
+
     private async Task<JsonArray> FetchSorted(bool usePriority, object sort)
     {
         var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
@@ -790,7 +847,8 @@ public class CamundaExternalTaskApiTests
 
     private async Task<ExternalTaskEntity> Seed(
         string topic, List<InputMapping>? inputs = null, List<OutputMapping>? outputs = null,
-        string processDefinitionKey = "order-process", long priority = 0)
+        string processDefinitionKey = "order-process", long priority = 0,
+        string? businessKey = null, string? tenantId = null)
     {
         var activityInstanceId = Guid.NewGuid();
         var entity = new ExternalTaskEntity
@@ -806,6 +864,8 @@ public class CamundaExternalTaskApiTests
             InputMappingsJson = JsonSerializer.Serialize(inputs ?? []),
             OutputMappingsJson = JsonSerializer.Serialize(outputs ?? []),
             Priority = priority,
+            BusinessKey = businessKey,
+            TenantId = tenantId,
             CreateTime = _clock.GetUtcNow().UtcDateTime,
         };
         _clock.Advance(TimeSpan.FromMilliseconds(1));
