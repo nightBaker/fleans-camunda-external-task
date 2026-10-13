@@ -30,7 +30,8 @@ public sealed record FetchExternalTaskTopicDto(
     string? ProcessDefinitionId,
     List<string>? ProcessDefinitionIdIn,
     string? ProcessDefinitionKey,
-    List<string>? ProcessDefinitionKeyIn);
+    List<string>? ProcessDefinitionKeyIn,
+    bool IncludeExtensionProperties = false);
 
 public sealed record CompleteExternalTaskDto(
     string? WorkerId,

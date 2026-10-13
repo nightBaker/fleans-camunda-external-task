@@ -741,6 +741,37 @@ public class CamundaExternalTaskApiTests
         }
     }
 
+    [TestMethod]
+    public async Task Extension_properties_come_from_reserved_inputs_and_are_not_variables()
+    {
+        // Arrange — a literal and an expression, as camunda:properties would carry.
+        await Seed("charge-card", inputs:
+        [
+            new InputMapping("eu-west", "extensionProperties.region"),
+            new InputMapping("=amount", "extensionProperties.limit"),
+            new InputMapping("=customer", "who"),
+        ]);
+
+        // Act
+        var without = await Fetch("w1", "charge-card", localVariables: true);
+        await _http.PostAsync($"/engine-rest/external-task/{without[0]!["id"]}/unlock", null);
+        var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
+        {
+            workerId = "w1",
+            maxTasks = 1,
+            topics = new[] { new { topicName = "charge-card", lockDuration = 10_000, localVariables = true, includeExtensionProperties = true } },
+        });
+        var with = JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsArray();
+
+        // Assert
+        Assert.HasCount(0, without[0]!["extensionProperties"]!.AsObject(), "Only returned on request, as in Camunda.");
+        CollectionAssert.AreEquivalent(new[] { "who" }, Names(without[0]!["variables"]!));
+        var properties = with[0]!["extensionProperties"]!;
+        Assert.AreEqual("eu-west", (string?)properties["region"]);
+        Assert.AreEqual("42", (string?)properties["limit"]);
+        CollectionAssert.AreEquivalent(new[] { "who" }, Names(with[0]!["variables"]!));
+    }
+
     private async Task<JsonArray> FetchSorted(bool usePriority, object sort)
     {
         var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
