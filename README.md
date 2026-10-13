@@ -30,7 +30,7 @@ Camunda workers ──fetchAndLock / complete / failure / bpmnError──┘ (/e
 | `tests/` | REST wire-format tests (SQLite, plus PostgreSQL with `FLEANS_PG_TESTS=1`) and stream-handler tests on an Orleans test cluster. |
 | `docs/manual-test-plan/` | End-to-end check with a real Camunda client against a real engine. |
 
-**Compatibility:** requires **Fleans 0.6.0 or later** (`IWorkflowInstanceCallback.GetVariablesIfActive`). Run it against an engine built from the same Fleans version or newer.
+**Compatibility:** requires **Fleans 0.7.0 or later** (`IWorkflowInstanceCallback.FailActivity` with variables, used for `bpmnError` variables). Run it against an engine built from the same Fleans version or newer.
 `FleansVersion` in `Directory.Build.props` pins the `Fleans.Worker` package the plugin compiles against.
 
 ## 1. Adapt the BPMN
@@ -240,7 +240,7 @@ These are the endpoints the official Java and JS external-task clients call:
 | `POST /external-task/fetchAndLock` | `workerId`, `maxTasks`, `usePriority`, `sorting` (`createTime` `asc`/`desc`; oldest first by default), `asyncResponseTimeout` (long polling, up to 30 min), per topic `topicName`, `lockDuration`, `variables`, `localVariables`, `includeExtensionProperties`, `processDefinitionId(In)`, `processDefinitionKey(In)`, `businessKey`, `tenantIdIn`, `withoutTenantId`. |
 | `POST /external-task/{id}/complete` | `variables` go to the workflow scope. `localVariables` are visible only to output mappings. |
 | `POST /external-task/{id}/failure` | `retries > 0`: the task is fetchable again after `retryTimeout`. `retries = 0`: the activity fails. |
-| `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. |
+| `POST /external-task/{id}/bpmnError` | Fails the activity with `errorCode`. An error boundary event with that code catches it. `variables` are set in the activity scope first, so the boundary path sees them. |
 | `POST /external-task/{id}/extendLock`, `/lock`, `/unlock` | Same semantics as Camunda. |
 | `GET /execution/{id}/localVariables/{name}/data` | Content of a `File` (or `Bytes`) variable. The Java and JS clients call it to load file variables. `{id}` is the task id. |
 | `GET /external-task`, `GET /external-task/count` | Operator queries. Filters: `externalTaskId`, `topicName`, `workerId`, `locked`, `notLocked`, `withRetriesLeft`, `noRetriesLeft`, `activityId`, `processInstanceId`, `processDefinitionId`, `tenantIdIn`, plus `firstResult` and `maxResults`. Oldest first. |
@@ -263,7 +263,6 @@ the bare `application/json` content type, the only one the JS client parses.
   incidents with `GET /external-task?noRetriesLeft=true` and resolve them with
   `PUT /external-task/{id}/retries`. Incidents do not show in the Fleans UI. An incident whose
   workflow was cancelled stays listed until its retries are set. The next fetch then removes it.
-- **`bpmnError` variables are ignored** (a warning is logged).
 - **Variable types:** `String`, `Boolean`, `Integer`, `Short`, `Long`, `Double`, `Date` (kept as a
   string), `Null`, `Json`, `Bytes`, `File`, and `Object` with `serializationDataFormat: application/json`.
   `Bytes` and `File` are stored in the workflow as
