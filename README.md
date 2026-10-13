@@ -54,6 +54,35 @@ Camunda's `<camunda:inputOutput>` is not read. Use Fleans
 instead: inputs appear to the worker as local variables, and outputs read the variables the
 worker sends on `complete`.
 
+```xml
+<!-- Camunda 7 -->
+<bpmn:extensionElements>
+  <camunda:inputOutput>
+    <camunda:inputParameter name="toCharge">${order.amount}</camunda:inputParameter>
+    <camunda:inputParameter name="currency">EUR</camunda:inputParameter>
+    <camunda:outputParameter name="receiptId">${receipt.id}</camunda:outputParameter>
+  </camunda:inputOutput>
+</bpmn:extensionElements>
+<!-- Fleans -->
+<bpmn:extensionElements>
+  <zeebe:ioMapping>
+    <zeebe:input source="=order.amount" target="toCharge" />
+    <zeebe:input source="EUR" target="currency" />
+    <zeebe:output source="=receipt.id" target="receiptId" />
+  </zeebe:ioMapping>
+</bpmn:extensionElements>
+```
+
+| Camunda parameter | Fleans mapping |
+|---|---|
+| `${a}` or `${a.b.c}` | `source="=a"`, `source="=a.b.c"` |
+| Constant text `EUR` | `source="EUR"` (or `source="=&quot;EUR&quot;"`) |
+| `${42}`, `${true}`, `${null}` | `source="=42"`, `source="=true"`, `source="=null"` |
+| `name` | `target` (letters, digits and `_` only) |
+| Expressions with operators or method calls, `<camunda:script>`, `<camunda:list>`, `<camunda:map>` | No equivalent. Compute the value earlier (a script task) or in the worker. |
+
+Declare `xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"` on `<bpmn:definitions>`.
+
 ### Task priority
 
 Camunda's `camunda:taskPriority` attribute becomes the reserved input `taskPriority`:
@@ -274,6 +303,16 @@ To build against an unreleased Fleans, pack `Fleans.Domain.Abstractions`,
 (`dotnet pack -p:Version=<FleansVersion> -o <feed>`). Then build with
 `-p:RestoreAdditionalProjectSources=<feed>`, using a separate `NUGET_PACKAGES` folder so the
 stand-in packages don't shadow the published ones later.
+
+### Schema changes
+
+The table is created at startup with `CREATE TABLE/INDEX IF NOT EXISTS`, which leaves an existing
+table as it is. Upgrades are therefore additive. A new column goes into `AddedColumns` in
+`CamundaExternalTaskServiceCollectionExtensions.cs`, which adds it to older tables at startup.
+It must be nullable or have a default of `0`. The schema-initializer tests drop those columns
+to simulate an old table. Renames, type changes and indexes on new columns need a versioned
+migration step: the create script runs before columns are added, so such an index would fail
+on an old table.
 
 ## Releasing
 
