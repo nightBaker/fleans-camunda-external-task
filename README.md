@@ -162,11 +162,25 @@ name, it fails with `network fleans_default declared as external, but could not 
 | `Orleans__ClusterId`, `Orleans__ServiceId` | *required* | The engine's cluster ids. |
 | `ConnectionStrings__camunda-external-tasks` | *required* | Database for the `camunda_external_tasks` table. The database and table are created at startup. |
 | `CamundaExternalTasks__Provider` | `Postgres` | `Postgres` or `Sqlite`. Use PostgreSQL with more than one replica. |
+| `CamundaExternalTasks__BasicAuth__Username`, `CamundaExternalTasks__BasicAuth__Password` | *unset* | Set both to require HTTP basic authentication, as Camunda's `ProcessEngineAuthenticationFilter` does. Setting only one fails startup. |
 | `Fleans__Streaming__Redis__TotalQueueCount` | `8` | The same setting the engine reads. Set it to the same value as the engine, or stream events land on queues this host doesn't read. |
 
-Only the Redis stream provider (the engine's default) is supported by this host. The endpoints
-are anonymous. Put the host behind your gateway, or fork `Program.cs` and add authentication.
-`MapCamundaExternalTaskApi()` returns the route group, so you can call `.RequireAuthorization()` on it.
+Only the Redis stream provider (the engine's default) is supported by this host. Without the
+basic-auth settings the endpoints are anonymous, so put the host behind your gateway. Workers
+then authenticate the Camunda way:
+
+```java
+ExternalTaskClient.create().baseUrl(url).addInterceptor(new BasicAuthProvider("demo", "s3cret")).build();
+```
+
+```js
+new Client({ baseUrl: url, interceptors: new BasicAuthInterceptor({ username: "demo", password: "s3cret" }) });
+```
+
+Basic auth sends the password in every request, so serve the host over TLS (or behind a TLS
+gateway). For other schemes, fork `Program.cs`: `MapCamundaExternalTaskApi()` returns the route
+group, so you can call `.RequireAuthorization()` on it. An embedding host can call
+`.RequireBasicAuthentication(user, password)` on it instead.
 
 To embed the plugin in your own plugin host instead, add the `Fleans.Plugins.CamundaExternalTask`
 package and register it:
