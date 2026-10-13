@@ -692,6 +692,69 @@ public class CamundaExternalTaskApiTests
         Assert.AreEqual(3L, (await Row(task.Id))!.Priority);
     }
 
+    [TestMethod]
+    public async Task Sorting_by_createTime_desc_hands_out_the_newest_first()
+    {
+        // Arrange
+        var old = await Seed("charge-card");
+        var young = await Seed("charge-card");
+
+        // Act
+        var tasks = await FetchSorted(usePriority: false, new { sortBy = "createTime", sortOrder = "desc" });
+
+        // Assert
+        CollectionAssert.AreEqual(new[] { young.Id, old.Id }, Ids(tasks));
+    }
+
+    [TestMethod]
+    public async Task Sorting_by_createTime_breaks_priority_ties()
+    {
+        // Arrange
+        var oldLow = await Seed("charge-card", priority: 1);
+        var oldHigh = await Seed("charge-card", priority: 9);
+        var youngHigh = await Seed("charge-card", priority: 9);
+
+        // Act
+        var asc = await FetchSorted(usePriority: true, new { sortBy = "createTime", sortOrder = "asc" });
+        foreach (var id in Ids(asc))
+            await _http.PostAsync($"/engine-rest/external-task/{id}/unlock", null);
+        var desc = await FetchSorted(usePriority: true, new { sortBy = "createTime", sortOrder = "desc" });
+
+        // Assert
+        CollectionAssert.AreEqual(new[] { oldHigh.Id, youngHigh.Id, oldLow.Id }, Ids(asc));
+        CollectionAssert.AreEqual(new[] { youngHigh.Id, oldHigh.Id, oldLow.Id }, Ids(desc));
+    }
+
+    [TestMethod]
+    public async Task Unsupported_sorting_is_a_bad_request()
+    {
+        foreach (var sort in new object[] { new { sortBy = "priority", sortOrder = "asc" }, new { sortBy = "createTime", sortOrder = "up" } })
+        {
+            var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
+            {
+                workerId = "w1",
+                maxTasks = 1,
+                sorting = new[] { sort },
+                topics = new[] { new { topicName = "charge-card", lockDuration = 1_000 } },
+            });
+            await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
+        }
+    }
+
+    private async Task<JsonArray> FetchSorted(bool usePriority, object sort)
+    {
+        var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
+        {
+            workerId = "w1",
+            maxTasks = 10,
+            usePriority,
+            sorting = new[] { sort },
+            topics = new[] { new { topicName = "charge-card", lockDuration = 10_000 } },
+        });
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, await response.Content.ReadAsStringAsync());
+        return JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsArray();
+    }
+
     private static string[] Ids(JsonArray tasks) => tasks.Select(t => (string)t!["id"]!).ToArray();
 
     private async Task<ExternalTaskEntity> Seed(
