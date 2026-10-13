@@ -55,6 +55,47 @@ public class CamundaVariablesTests
     }
 
     [TestMethod]
+    public void Bytes_round_trip_as_base64()
+    {
+        var stored = CamundaVariables.ToFleans("v", new VariableValueDto(JsonSerializer.SerializeToElement("AQID"), "Bytes", null));
+
+        var typed = CamundaVariables.ToCamunda(stored);
+
+        Assert.AreEqual("Bytes", typed.Type);
+        Assert.AreEqual("AQID", typed.Value);
+    }
+
+    [TestMethod]
+    public void File_keeps_its_metadata_and_is_returned_without_inline_content()
+    {
+        // Arrange — what camunda-external-task-client sends for a File.
+        var stored = CamundaVariables.ToFleans("v", new VariableValueDto(JsonSerializer.SerializeToElement("aGVsbG8="), "File",
+            new Dictionary<string, object?>
+            {
+                ["filename"] = JsonSerializer.SerializeToElement("hello.txt"),
+                ["mimetype"] = JsonSerializer.SerializeToElement("text/plain"),
+                ["encoding"] = JsonSerializer.SerializeToElement("utf-8"),
+            }));
+
+        // Act
+        var typed = CamundaVariables.ToCamunda(stored);
+
+        // Assert
+        Assert.IsTrue(CamundaVariables.TryGetBinary(stored, out var binary));
+        Assert.AreEqual("aGVsbG8=", binary.Base64);
+        Assert.AreEqual("File", typed.Type);
+        Assert.IsNull(typed.Value, "As in Camunda, clients download file content separately.");
+        Assert.AreEqual("hello.txt", typed.ValueInfo!["filename"]);
+        Assert.AreEqual("text/plain", typed.ValueInfo["mimetype"]);
+        Assert.AreEqual("utf-8", typed.ValueInfo["encoding"]);
+    }
+
+    [TestMethod]
+    public void Bytes_that_are_not_base64_are_rejected() =>
+        Assert.ThrowsExactly<FormatException>(() =>
+            CamundaVariables.ToFleans("v", new VariableValueDto(JsonSerializer.SerializeToElement("not base64!"), "Bytes", null)));
+
+    [TestMethod]
     public void FormatDate_converts_local_times_to_utc()
     {
         var utc = new DateTime(2026, 3, 4, 5, 6, 7, 89, DateTimeKind.Utc);
