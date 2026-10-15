@@ -12,7 +12,11 @@ namespace Fleans.Plugins.CamundaExternalTask;
 /// </summary>
 public static class ReservedInputs
 {
-    /// <summary>Camunda's process-instance business key, returned on the task and usable as a fetch filter.</summary>
+    /// <summary>
+    /// Camunda's process-instance business key, returned on the task and usable as a fetch filter.
+    /// When mapped, it replaces the instance's business id, even when it evaluates to null; see
+    /// <see cref="EvaluateBusinessKey"/>.
+    /// </summary>
     public const string BusinessKey = "businessKey";
 
     /// <summary>Camunda's tenant id, returned on the task and usable as a fetch filter.</summary>
@@ -35,10 +39,25 @@ public static class ReservedInputs
     {
         var mapping = inputMappings.LastOrDefault(m => m.Target == target);
         if (mapping is null) return null;
-        var text = ToText(MappingResolver.Resolve(mapping.Source, variables));
+        return CheckLength(target, $"'{mapping.Source}'", ToText(MappingResolver.Resolve(mapping.Source, variables)));
+    }
+
+    /// <summary>
+    /// The task's business key: the reserved <see cref="BusinessKey"/> input when mapped (a null
+    /// result included, so a process can opt out), otherwise the instance's business id. Both go
+    /// through the <see cref="MaxLength"/> check, so the column fits whatever the engine allows.
+    /// </summary>
+    public static string? EvaluateBusinessKey(
+        IEnumerable<InputMapping> inputMappings, string? instanceBusinessId, IDictionary<string, object?> variables)
+        => inputMappings.Any(m => m.Target == BusinessKey)
+            ? EvaluateString(inputMappings, BusinessKey, variables)
+            : CheckLength(BusinessKey, "(the instance business id)", instanceBusinessId);
+
+    private static string? CheckLength(string target, string source, string? text)
+    {
         if (text is { Length: > MaxLength })
             throw new CustomTaskFailedActivityException("400",
-                $"{target} '{mapping.Source}' is {text.Length} characters long; at most {MaxLength} are allowed.");
+                $"{target} {source} is {text.Length} characters long; at most {MaxLength} are allowed.");
         return text;
     }
 

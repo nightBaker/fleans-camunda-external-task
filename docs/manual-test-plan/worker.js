@@ -9,7 +9,8 @@ const client = new Client({
   use: logger,
 });
 client.subscribe("charge-card", async ({ task, taskService }) => {
-  console.log("amount =", task.variables.get("amount"), "amountToCharge =", task.variables.get("amountToCharge"));
+  console.log("amount =", task.variables.get("amount"), "amountToCharge =", task.variables.get("amountToCharge"),
+    "businessKey =", task.businessKey);
   if (mode === "bpmnError") return taskService.handleBpmnError(task, "PAYMENT_DECLINED", "insufficient funds");
   if (mode === "failure") return taskService.handleFailure(task, { errorMessage: "card service down", errorDetails: "HTTP 503", retries: 0, retryTimeout: 0 });
   const vars = new Variables();

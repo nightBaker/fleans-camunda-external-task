@@ -1,11 +1,11 @@
 <Project>
   <PropertyGroup>
     <!-- Package version of this plugin. Tracks the Fleans engine release it is built against. -->
-    <VersionPrefix>0.7.1</VersionPrefix>
+    <VersionPrefix>0.8.0</VersionPrefix>
     <!-- Fleans plugin-author packages (Fleans.Worker + abstractions) this plugin compiles against.
-         0.7.0 is the first release with IWorkflowInstanceCallback.FailActivity(…, variables)
-         (nightBaker/fleans#822), used for bpmnError variables. -->
-    <FleansVersion>0.7.0</FleansVersion>
+         0.8.0 is the first release with the process instance business id on ExecuteCustomTaskEvent
+         (nightBaker/fleans#824), returned to workers as businessKey. -->
+    <FleansVersion>0.8.0</FleansVersion>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

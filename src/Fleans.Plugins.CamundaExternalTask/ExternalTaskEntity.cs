@@ -27,7 +27,10 @@ public sealed class ExternalTaskEntity
     /// <summary>Higher is fetched first when a worker asks for <c>usePriority</c>. See <see cref="ExternalTaskPriority"/>.</summary>
     public long Priority { get; set; }
 
-    /// <summary>From the reserved <c>businessKey</c> input, evaluated when the task is queued.</summary>
+    /// <summary>
+    /// The instance's business id, or the reserved <c>businessKey</c> input when mapped; set when
+    /// the task is queued. See <see cref="ReservedInputs.EvaluateBusinessKey"/>.
+    /// </summary>
     public string? BusinessKey { get; set; }
 
     /// <summary>From the reserved <c>tenantId</c> input, evaluated when the task is queued.</summary>
