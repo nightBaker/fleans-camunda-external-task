@@ -81,9 +81,8 @@ public sealed partial class CamundaExternalTaskHandler(
         try
         {
             priority = ExternalTaskPriority.Evaluate(item.InputMappings, scope);
-            // The reserved input overrides the instance's business id (e.g. a call activity's child, which has none).
-            businessKey = ReservedInputs.EvaluateString(item.InputMappings, ReservedInputs.BusinessKey, scope)
-                ?? item.BusinessId;
+            // The reserved input, when mapped, replaces the instance's business id (e.g. a call activity's child, which has none).
+            businessKey = ReservedInputs.EvaluateBusinessKey(item.InputMappings, item.BusinessId, scope);
             tenantId = ReservedInputs.EvaluateString(item.InputMappings, ReservedInputs.TenantId, scope);
         }
         catch (CustomTaskFailedActivityException ex)

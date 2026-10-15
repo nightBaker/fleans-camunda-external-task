@@ -128,8 +128,9 @@ The business key is the process instance's
 [business id](https://nightbaker.github.io/fleans/reference/api/#business-id), set when the
 instance is started (`"BusinessId": "order-123"` on `POST /Execution/start` or
 `POST /Execution/message`). Fleans has no tenants, so the tenant id comes from a reserved input.
-A `businessKey` input overrides the business id, for example in a call activity's child
-instance, which has none. Reserved inputs are evaluated when the task is queued:
+A mapped `businessKey` input replaces the business id, for example in a call activity's child
+instance, which has none. It wins even when it evaluates to `null`, so a process can leave its
+tasks unkeyed. Reserved inputs are evaluated when the task is queued:
 
 ```xml
 <zeebe:input source="=order.id" target="businessKey" />
@@ -147,6 +148,10 @@ here and in extension properties.
 to such a name, rename the target. Tasks queued by 0.6.0 under such a name no longer carry that
 variable after the upgrade; drain or complete them first. The new columns are added to the
 existing table at startup.
+
+**Upgrading from 0.7.x:** the business key is set when a task is queued. Tasks queued by 0.7.x
+keep a `null` business key even when their instance has a business id, so a `businessKey`
+fetch filter does not match them. Drain or complete them first.
 
 ## 2. Run the plugin host
 

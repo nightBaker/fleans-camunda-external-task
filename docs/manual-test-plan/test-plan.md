@@ -29,7 +29,7 @@ The `charge` activity stays **Active** until a worker runs.
 ## Scenario A — complete
 
 1. `BASE_URL=http://localhost:5180/engine-rest MODE=complete node worker.js`
-2. The worker logs `amount = 42 amountToCharge = 42`, then `✓ completed task …`.
+2. The worker logs `amount = 42 amountToCharge = 42 businessKey = null`, then `✓ completed task …`.
 3. `GET /Instances/<id>/state` shows `isCompleted: true` and `paid` completed. The variables contain `charged = True` and `receipt = {"id":"R-1","total":42.5}`.
 4. `GET http://localhost:5180/engine-rest/external-task/count` returns `{"count":0}`.
 
@@ -44,5 +44,13 @@ The `charge` activity stays **Active** until a worker runs.
 ## Scenario D — cancelled instance
 
 Cancel a started instance from the Web UI before running a worker. Then `MODE=complete node worker.js` receives no task, and the host logs EventId 9365 (*stale task removed*).
+
+## Scenario E — business key from the instance business id
+
+Start the instance with a business id:
+`POST https://localhost:7140/Execution/start` `{"WorkflowId":"camunda-charge","Variables":{"amount":42},"BusinessId":"order-1001"}`.
+Then `MODE=complete node worker.js`. Expect: the worker logs `businessKey = order-1001`. This checks the
+engine side of the contract (the engine fills `ExecuteCustomTaskEvent.BusinessId`), which the stream-handler
+tests only simulate.
 
 Last run: 2026-10-12, scenarios A–C passed against fleans `main` (released as 0.6.0) with `camunda-external-task-client-js` 3.1.0.

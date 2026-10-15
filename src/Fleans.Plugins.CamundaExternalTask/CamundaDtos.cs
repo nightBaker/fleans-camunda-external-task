@@ -2,7 +2,8 @@ namespace Fleans.Plugins.CamundaExternalTask;
 
 // Request/response shapes of the Camunda 7 REST API (/engine-rest/external-task). Property names
 // serialize camelCase, matching Camunda. Request properties a Fleans deployment cannot honour
-// (businessKey, tenantId, variable filters, …) are accepted and ignored by the JSON binder.
+// (variable filters, …) are accepted and ignored by the JSON binder; businessKey and tenantIdIn
+// are honoured as filters.
 // Fields with no Fleans equivalent are returned as null (see issue #1).
 
 /// <summary>Camunda typed value: <c>{ "value": …, "type": "String", "valueInfo": {} }</c>.</summary>
