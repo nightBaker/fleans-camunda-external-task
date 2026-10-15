@@ -86,8 +86,8 @@ public sealed partial class CamundaExternalTaskHandler(
         }
         catch (CustomTaskFailedActivityException ex)
         {
-            // Deterministic (priority not a number, broken path): a redelivery would fail the same way.
-            LogPriorityFailed(ex, item.ActivityId);
+            // Deterministic (priority not a number, key too long, broken path): a redelivery would fail the same way.
+            LogReservedInputInvalid(ex, item.ActivityId);
             await callback.FailActivity(item.ActivityId, item.ActivityInstanceId, ex);
             return;
         }
@@ -151,7 +151,7 @@ public sealed partial class CamundaExternalTaskHandler(
 
     [LoggerMessage(EventId = 9356, Level = LogLevel.Error,
         Message = "Task priority, business key or tenant id of Camunda external-task activity {ActivityId} is invalid — failing the activity")]
-    private partial void LogPriorityFailed(Exception ex, string activityId);
+    private partial void LogReservedInputInvalid(Exception ex, string activityId);
 
     [LoggerMessage(EventId = 9353, Level = LogLevel.Error,
         Message = "Camunda external-task event stream error")]
