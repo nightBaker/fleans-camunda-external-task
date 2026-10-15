@@ -339,8 +339,10 @@ on an old table.
 ## Releasing
 
 Push a tag `v<version>` that matches `VersionPrefix`/`VersionSuffix` in `Directory.Build.props`.
-`release.yml` runs the tests, then publishes the NuGet package and the
-`ghcr.io/nightbaker/fleans-camunda-external-task` image.
+`release.yml` runs the tests, publishes the NuGet package and the
+`ghcr.io/nightbaker/fleans-camunda-external-task` image, then creates the GitHub Release (notes
+generated from the merged PRs, the `.nupkg` attached; a version with a suffix such as `-rc.1` is
+marked as a pre-release).
 
 NuGet uses [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing),
 so there is no API key secret. On nuget.org, the `nightBaker` account needs a Trusted Publishing

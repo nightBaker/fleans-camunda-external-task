@@ -1,7 +1,7 @@
 name: release
 
 # Push a tag v<version> (matching VersionPrefix/VersionSuffix in Directory.Build.props) to publish
-# the NuGet package to nuget.org and the host image to ghcr.io.
+# the NuGet package to nuget.org and the host image to ghcr.io, then create the GitHub Release.
 #
 # NuGet uses Trusted Publishing — no stored API key. The job's GitHub OIDC token is exchanged for a
 # 1-hour nuget.org key, which requires a Trusted Publishing policy on nuget.org (owner nightBaker):
@@ -11,7 +11,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: read
+  contents: write   # GitHub Release
   packages: write   # ghcr.io image
   id-token: write   # OIDC token for NuGet Trusted Publishing
 
@@ -46,3 +46,15 @@ jobs:
           docker build -t $image:${{ steps.ver.outputs.version }} -t $image:latest .
           docker push $image:${{ steps.ver.outputs.version }}
           docker push $image:latest
+      # Last, so a release only appears once the package and the image are published.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          prerelease=$([[ "$VERSION" == *-* ]] && echo --prerelease || true)
+          {
+            echo "- NuGet: [\`Fleans.Plugins.CamundaExternalTask\` $VERSION](https://www.nuget.org/packages/Fleans.Plugins.CamundaExternalTask/$VERSION)"
+            echo "- Image: \`ghcr.io/nightbaker/fleans-camunda-external-task:$VERSION\`"
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg --verify-tag --generate-notes --notes-file notes.md $prerelease
