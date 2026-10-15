@@ -165,6 +165,39 @@ public class StreamHandlerTests
     }
 
     [TestMethod]
+    public async Task Business_key_is_the_instance_business_id()
+    {
+        // Arrange
+        var (instanceId, evt) = NewTask("bill-order", businessId: "order-1001");
+        FakeWorkflowInstance.Activate(evt.ActivityInstanceId);
+
+        // Act
+        await Publish(evt);
+        await WaitUntil(async () => await RowCount(instanceId) == 1);
+        var task = (await Service.FetchAndLock(Fetch("bill-order"), default)).Single();
+
+        // Assert
+        Assert.AreEqual("order-1001", task.BusinessKey);
+    }
+
+    [TestMethod]
+    public async Task Business_key_input_overrides_the_instance_business_id()
+    {
+        // Arrange
+        var (instanceId, evt) = NewTask("bill-order",
+            inputs: [new InputMapping("=ref", ReservedInputs.BusinessKey)], businessId: "order-1001");
+        FakeWorkflowInstance.Activate(evt.ActivityInstanceId, ("ref", "invoice-7"));
+
+        // Act
+        await Publish(evt);
+        await WaitUntil(async () => await RowCount(instanceId) == 1);
+        var task = (await Service.FetchAndLock(Fetch("bill-order"), default)).Single();
+
+        // Assert
+        Assert.AreEqual("invoice-7", task.BusinessKey);
+    }
+
+    [TestMethod]
     public async Task Business_key_too_long_for_the_column_fails_the_activity_instead_of_retrying()
     {
         // Arrange
@@ -196,7 +229,8 @@ public class StreamHandlerTests
         Assert.AreEqual(0, await RowCount(instanceId));
     }
 
-    private static (Guid InstanceId, ExecuteCustomTaskEvent Event) NewTask(string topic, List<InputMapping>? inputs = null)
+    private static (Guid InstanceId, ExecuteCustomTaskEvent Event) NewTask(
+        string topic, List<InputMapping>? inputs = null, string? businessId = null)
     {
         var instanceId = Guid.NewGuid();
         return (instanceId, new ExecuteCustomTaskEvent(
@@ -208,7 +242,8 @@ public class StreamHandlerTests
             TaskType: CamundaExternalTaskConventions.TaskTypeFor(topic),
             InputMappings: inputs ?? new List<InputMapping>(),
             OutputMappings: new List<OutputMapping>(),
-            VariablesId: Guid.NewGuid()));
+            VariablesId: Guid.NewGuid(),
+            BusinessId: businessId));
     }
 
     /// <summary>Publishes exactly as the engine's WorkflowEventsPublisher does.</summary>

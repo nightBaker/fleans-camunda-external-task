@@ -12,7 +12,10 @@ namespace Fleans.Plugins.CamundaExternalTask;
 /// </summary>
 public static class ReservedInputs
 {
-    /// <summary>Camunda's process-instance business key, returned on the task and usable as a fetch filter.</summary>
+    /// <summary>
+    /// Camunda's process-instance business key, returned on the task and usable as a fetch filter.
+    /// Overrides the instance's business id, which is the business key when this input is absent.
+    /// </summary>
     public const string BusinessKey = "businessKey";
 
     /// <summary>Camunda's tenant id, returned on the task and usable as a fetch filter.</summary>

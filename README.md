@@ -30,7 +30,7 @@ Camunda workers ──fetchAndLock / complete / failure / bpmnError──┘ (/e
 | `tests/` | REST wire-format tests (SQLite, plus PostgreSQL with `FLEANS_PG_TESTS=1`) and stream-handler tests on an Orleans test cluster. |
 | `docs/manual-test-plan/` | End-to-end check with a real Camunda client against a real engine. |
 
-**Compatibility:** requires **Fleans 0.7.0 or later** (`IWorkflowInstanceCallback.FailActivity` with variables, used for `bpmnError` variables). Run it against an engine built from the same Fleans version or newer.
+**Compatibility:** requires **Fleans 0.8.0 or later** (the process instance business id on `ExecuteCustomTaskEvent`, returned as `businessKey`). Run it against an engine built from the same Fleans version or newer.
 `FleansVersion` in `Directory.Build.props` pins the `Fleans.Worker` package the plugin compiles against.
 
 ## 1. Adapt the BPMN
@@ -124,7 +124,12 @@ and are left out when the source gives `null`.
 
 ### Business key and tenant id
 
-Fleans has neither, so they come from reserved inputs, evaluated when the task is queued:
+The business key is the process instance's
+[business id](https://nightbaker.github.io/fleans/reference/api/#business-id), set when the
+instance is started (`"BusinessId": "order-123"` on `POST /Execution/start` or
+`POST /Execution/message`). Fleans has no tenants, so the tenant id comes from a reserved input.
+A `businessKey` input overrides the business id, for example in a call activity's child
+instance, which has none. Reserved inputs are evaluated when the task is queued:
 
 ```xml
 <zeebe:input source="=order.id" target="businessKey" />
@@ -278,7 +283,7 @@ the bare `application/json` content type, the only one the JS client parses.
   objects are rejected with `400`.
 - **Identifiers:** task `id`, `executionId` and `activityInstanceId` are the Fleans activity
   instance id. `processInstanceId` is the workflow instance id, and `processDefinitionKey` is the
-  process id. `businessKey` and `tenantId` come from reserved inputs (see
+  process id. `businessKey` is the instance's business id and `tenantId` comes from a reserved input (see
   [Business key and tenant id](#business-key-and-tenant-id)). `processDefinitionVersionTag` is
   always `null`, and the fetch filter on it is ignored.
 - **Stale tasks:** a task whose activity ended without a worker (cancelled, or interrupted by a
