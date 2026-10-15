@@ -30,5 +30,5 @@ See the [repository README](https://github.com/nightBaker/fleans-camunda-externa
 for the ready-to-run host, configuration, and differences from Camunda 7. For example, incidents
 are opt-in (`AddCamundaExternalTasks(db, o => o.Incidents = true)`); otherwise `retries = 0`
 fails the activity.
-Requires Fleans 0.6.0 or later.
+Requires Fleans 0.7.0 or later.
 

@@ -104,7 +104,7 @@ public static class CamundaVariables
             : new VariableValueDto(null, "File", new Dictionary<string, object?>
             {
                 ["filename"] = binary.Filename,
-                ["mimetype"] = binary.MimeType,
+                ["mimeType"] = binary.MimeType,
                 ["encoding"] = binary.Encoding,
             }),
         _ => Typed(JsonSerializer.Serialize(ToSerializable(value)), "Json"),
@@ -155,10 +155,18 @@ public static class CamundaVariables
         return marker;
     }
 
-    private static string? Info(Dictionary<string, object?>? valueInfo, string key) =>
-        valueInfo is null || !valueInfo.TryGetValue(key, out var v) ? null
-        : v is JsonElement { ValueKind: JsonValueKind.String } e ? e.GetString()
-        : v?.ToString();
+    /// <summary>
+    /// Case-insensitive: Camunda's Java API names the key <c>mimeType</c>, while some clients send
+    /// <c>mimetype</c>.
+    /// </summary>
+    private static string? Info(Dictionary<string, object?>? valueInfo, string key)
+    {
+        if (valueInfo is null) return null;
+        foreach (var (name, v) in valueInfo)
+            if (name.Equals(key, StringComparison.OrdinalIgnoreCase))
+                return v is JsonElement { ValueKind: JsonValueKind.String } e ? e.GetString() : v?.ToString();
+        return null;
+    }
 
     private static VariableValueDto Typed(object? value, string type) =>
         new(value, type, new Dictionary<string, object?>());

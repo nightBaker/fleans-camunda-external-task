@@ -73,7 +73,7 @@ public class CamundaVariablesTests
             new Dictionary<string, object?>
             {
                 ["filename"] = JsonSerializer.SerializeToElement("hello.txt"),
-                ["mimetype"] = JsonSerializer.SerializeToElement("text/plain"),
+                ["mimeType"] = JsonSerializer.SerializeToElement("text/plain"),
                 ["encoding"] = JsonSerializer.SerializeToElement("utf-8"),
             }));
 
@@ -86,8 +86,26 @@ public class CamundaVariablesTests
         Assert.AreEqual("File", typed.Type);
         Assert.IsNull(typed.Value, "As in Camunda, clients download file content separately.");
         Assert.AreEqual("hello.txt", typed.ValueInfo!["filename"]);
-        Assert.AreEqual("text/plain", typed.ValueInfo["mimetype"]);
+        Assert.AreEqual("text/plain", typed.ValueInfo["mimeType"]);
         Assert.AreEqual("utf-8", typed.ValueInfo["encoding"]);
+    }
+
+    [TestMethod]
+    public void File_mime_type_is_read_whatever_the_key_casing()
+    {
+        // Arrange — some clients send "mimetype" instead of Camunda's "mimeType".
+        var stored = CamundaVariables.ToFleans("v", new VariableValueDto(JsonSerializer.SerializeToElement("aGVsbG8="), "File",
+            new Dictionary<string, object?>
+            {
+                ["filename"] = JsonSerializer.SerializeToElement("hello.txt"),
+                ["mimetype"] = JsonSerializer.SerializeToElement("text/plain"),
+            }));
+
+        // Act
+        var typed = CamundaVariables.ToCamunda(stored);
+
+        // Assert
+        Assert.AreEqual("text/plain", typed.ValueInfo!["mimeType"]);
     }
 
     [TestMethod]

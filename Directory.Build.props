@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <!-- Package version of this plugin. Tracks the Fleans engine release it is built against. -->
-    <VersionPrefix>0.7.0</VersionPrefix>
+    <VersionPrefix>0.7.1</VersionPrefix>
     <!-- Fleans plugin-author packages (Fleans.Worker + abstractions) this plugin compiles against.
          0.7.0 is the first release with IWorkflowInstanceCallback.FailActivity(…, variables)
          (nightBaker/fleans#822), used for bpmnError variables. -->

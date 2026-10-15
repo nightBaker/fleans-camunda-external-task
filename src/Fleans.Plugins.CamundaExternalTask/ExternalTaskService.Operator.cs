@@ -58,6 +58,7 @@ public sealed partial class ExternalTaskService
     {
         if (query.FirstResult is < 0 || query.MaxResults is < 0)
             throw BadRequest("firstResult and maxResults must not be negative.");
+        await PruneStaleIncidents(query);
         await using var db = await dbFactory.CreateDbContextAsync();
         var rows = Filter(db, query).OrderBy(t => t.CreateTime).ThenBy(t => t.Id).Skip(query.FirstResult ?? 0);
         if (query.MaxResults is { } max)
@@ -67,13 +68,54 @@ public sealed partial class ExternalTaskService
 
     public async Task<CountResultDto> Count(ExternalTaskQueryDto query)
     {
+        await PruneStaleIncidents(query);
         await using var db = await dbFactory.CreateDbContextAsync();
         return new CountResultDto(await Filter(db, query).LongCountAsync());
     }
 
-    public async Task<ExternalTaskDto> Get(string id) => ToDto(await Load(id));
+    public async Task<ExternalTaskDto> Get(string id) => ToDto(await LoadLive(id));
 
-    public async Task<string?> GetErrorDetails(string id) => (await Load(id)).ErrorDetails;
+    public async Task<string?> GetErrorDetails(string id) => (await LoadLive(id)).ErrorDetails;
+
+    /// <summary>Like <c>Load</c>, but an incident whose activity has ended is removed and is a 404.</summary>
+    private async Task<ExternalTaskEntity> LoadLive(string id)
+    {
+        var task = await Load(id);
+        if (task.Retries == 0 && await RemoveIfStale(task))
+            throw NotFound(id);
+        return task;
+    }
+
+    /// <summary>
+    /// Incidents are never fetched, so the fetch-time stale cleanup never sees them. Before the
+    /// operator queries answer, drop the matching incidents whose activity has ended (workflow
+    /// cancelled, activity interrupted by a boundary event). Incidents are few, so one grain call each.
+    /// </summary>
+    private async Task PruneStaleIncidents(ExternalTaskQueryDto query)
+    {
+        List<ExternalTaskEntity> incidents;
+        await using (var db = await dbFactory.CreateDbContextAsync())
+            incidents = await Filter(db, query).Where(t => t.Retries == 0).ToListAsync();
+        foreach (var incident in incidents)
+            await RemoveIfStale(incident);
+    }
+
+    /// <summary>Deletes the task when its activity is no longer active; a transient check error keeps it.</summary>
+    private async Task<bool> RemoveIfStale(ExternalTaskEntity task)
+    {
+        try
+        {
+            if (await Callback(task).GetVariablesIfActive(task.ActivityInstanceId, task.VariablesId) is not null)
+                return false;
+        }
+        catch (Exception ex) when (IsTransient(ex))
+        {
+            return false;
+        }
+        await Delete(task.Id);
+        LogStaleTaskRemoved(task.Id, task.TopicName);
+        return true;
+    }
 
     public async Task<List<string>> TopicNames(bool withLockedTasks, bool withUnlockedTasks, bool withRetriesLeft)
     {

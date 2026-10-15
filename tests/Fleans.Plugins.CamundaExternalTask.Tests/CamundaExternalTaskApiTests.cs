@@ -1002,6 +1002,86 @@ public class CamundaExternalTaskApiTests
         await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
     }
 
+    [TestMethod]
+    public async Task An_incident_whose_activity_ended_is_removed_by_the_operator_queries()
+    {
+        // Arrange — an incident, then the workflow is cancelled.
+        EnableIncidents();
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+        await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/failure",
+            new { workerId = "w1", errorMessage = "declined", retries = 0, retryTimeout = 0 });
+        _processVariables = null;
+
+        // Act
+        var list = await GetJson("/engine-rest/external-task?noRetriesLeft=true");
+        var single = await _http.GetAsync($"/engine-rest/external-task/{task.Id}");
+
+        // Assert
+        Assert.HasCount(0, list.AsArray());
+        await AssertError(single, HttpStatusCode.NotFound, "InvalidRequestException");
+        Assert.IsNull(await Row(task.Id));
+    }
+
+    [TestMethod]
+    public async Task An_incident_cannot_be_locked()
+    {
+        EnableIncidents();
+        var task = await Seed("charge-card");
+        await _http.PutAsJsonAsync($"/engine-rest/external-task/{task.Id}/retries", new { retries = 0 });
+
+        var response = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/lock",
+            new { workerId = "w1", lockDuration = 10_000 });
+
+        await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
+        Assert.IsNull((await Row(task.Id))!.WorkerId);
+    }
+
+    [TestMethod]
+    public async Task BpmnError_whose_variables_the_engine_rejects_fails_the_activity()
+    {
+        // Arrange — the engine refuses the variables outright (not a transient error).
+        var task = await Seed("charge-card");
+        await Fetch("w1", "charge-card");
+        _callback.FailActivity(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<Exception>(), Arg.Any<ExpandoObject?>())
+            .Returns(Task.FromException(new InvalidOperationException("cannot store")));
+
+        // Act
+        var response = await _http.PostAsJsonAsync($"/engine-rest/external-task/{task.Id}/bpmnError", new
+        {
+            workerId = "w1",
+            errorCode = "DECLINED",
+            variables = new Dictionary<string, object> { ["x"] = new { value = "y", type = "String" } },
+        });
+
+        // Assert — no 500 loop: the activity is failed and the task is gone.
+        await AssertError(response, HttpStatusCode.BadRequest, "InvalidRequestException");
+        await _callback.Received(1).FailActivity("ct1", task.ActivityInstanceId, Arg.Any<InvalidOperationException>());
+        Assert.IsNull(await Row(task.Id));
+    }
+
+    [TestMethod]
+    public async Task Extension_properties_use_camunda_text_for_booleans_and_json_for_objects()
+    {
+        _processVariables = Expando(("express", true), ("order", Expando(("id", 7L))));
+        await Seed("charge-card", inputs:
+        [
+            new InputMapping("=express", "extensionProperty_express"),
+            new InputMapping("=order", "extensionProperty_order"),
+        ]);
+
+        var response = await _http.PostAsJsonAsync("/engine-rest/external-task/fetchAndLock", new
+        {
+            workerId = "w1",
+            maxTasks = 1,
+            topics = new[] { new { topicName = "charge-card", lockDuration = 10_000, includeExtensionProperties = true } },
+        });
+
+        var properties = JsonNode.Parse(await response.Content.ReadAsStringAsync())![0]!["extensionProperties"]!;
+        Assert.AreEqual("true", (string?)properties["express"]);
+        Assert.AreEqual("{\"id\":7}", (string?)properties["order"]);
+    }
+
     private void EnableIncidents() =>
         _app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<CamundaExternalTaskOptions>>().Value.Incidents = true;
 

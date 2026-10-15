@@ -121,8 +121,10 @@ public sealed partial class ExternalTaskService(
                 if (candidates.Count == 0) break;
 
                 // Same order across topics as within one.
-                var order = Order(candidates.Select(c => c.Task).AsQueryable(), usePriority, newestFirst).ToList();
-                var batch = candidates.OrderBy(c => order.IndexOf(c.Task))
+                var byPriority = candidates.OrderByDescending(c => usePriority ? c.Task.Priority : 0);
+                var batch = (newestFirst
+                        ? byPriority.ThenByDescending(c => c.Task.CreateTime)
+                        : byPriority.ThenBy(c => c.Task.CreateTime))
                     .DistinctBy(c => c.Task.Id)
                     .Take(want);
                 foreach (var (candidate, topic) in batch)
@@ -330,7 +332,7 @@ public sealed partial class ExternalTaskService(
                 if (includeExtensionProperties
                     && MappingResolver.Resolve(mapping.Source, processVariables) is { } property)
                     extensionProperties[mapping.Target[ExtensionPropertyPrefix.Length..]] =
-                        Convert.ToString(property, CultureInfo.InvariantCulture) ?? "";
+                        ReservedInputs.ToText(property) ?? "";
                 continue;
             }
             if (!ReservedInputs.IsReserved(mapping.Target))
@@ -441,7 +443,9 @@ public sealed partial class ExternalTaskService(
 
         // The variables land in the activity's scope before the error propagates, so the
         // catching error boundary (or error event sub-process) sees them, as in Camunda.
-        await Report(task, failActivityOnRejection: false, () =>
+        // failActivityOnRejection: if the engine refuses the variables outright, a retry would be
+        // refused the same way — fail the activity instead of looping on 500s.
+        await Report(task, failActivityOnRejection: true, () =>
             Callback(task).FailActivity(task.ActivityId, task.ActivityInstanceId,
                 new CustomTaskFailedActivityException(request.ErrorCode, request.ErrorMessage ?? request.ErrorCode),
                 variables));
@@ -479,8 +483,9 @@ public sealed partial class ExternalTaskService(
         await using var db = await dbFactory.CreateDbContextAsync();
         // Free (never locked, lock expired, retry backoff over) or re-locked by its own holder.
         // A task waiting out a retryTimeout has no worker but a future expiry — not free.
+        // An incident (retries 0) waits for an operator, so it cannot be locked either.
         var updated = await db.ExternalTasks
-            .Where(t => t.Id == id
+            .Where(t => t.Id == id && (t.Retries == null || t.Retries > 0)
                 && (t.LockExpirationTime == null || t.LockExpirationTime <= now
                     || (t.WorkerId == workerId && (t.ReportingUntil == null || t.ReportingUntil <= now))))
             .ExecuteUpdateAsync(s => s
@@ -488,7 +493,7 @@ public sealed partial class ExternalTaskService(
                 .SetProperty(t => t.LockExpirationTime, expires)
                 .SetProperty(t => t.ReportingUntil, (DateTime?)null));
         if (updated == 0)
-            throw BadRequest($"External Task {id} is already locked, waiting for a retry, or its result is being reported.");
+            throw BadRequest($"External Task {id} is already locked, waiting for a retry, an incident, or its result is being reported.");
     }
 
     public async Task Unlock(string id)
