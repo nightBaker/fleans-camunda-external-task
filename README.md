@@ -133,11 +133,15 @@ Fleans has neither, so they come from reserved inputs, evaluated when the task i
 
 Tasks return them as `businessKey` and `tenantId`. Fetch topics can filter on `businessKey`,
 `tenantIdIn` and `withoutTenantId` (`tenantIdIn` plus `withoutTenantId` matches either).
-They are not sent as variables.
+They are not sent as variables. Each is at most 256 characters; a longer value fails the
+activity with error code `400`. Booleans become `true`/`false` and objects or lists become JSON,
+here and in extension properties.
 
 **Upgrading from 0.6.0:** `taskPriority`, `businessKey`, `tenantId` and targets starting with
 `extensionProperty_` were ordinary inputs before. If a process already maps a worker variable
-to such a name, rename the target. The new columns are added to the existing table at startup.
+to such a name, rename the target. Tasks queued by 0.6.0 under such a name no longer carry that
+variable after the upgrade; drain or complete them first. The new columns are added to the
+existing table at startup.
 
 ## 2. Run the plugin host
 
@@ -278,7 +282,11 @@ the bare `application/json` content type, the only one the JS client parses.
   [Business key and tenant id](#business-key-and-tenant-id)). `processDefinitionVersionTag` is
   always `null`, and the fetch filter on it is ignored.
 - **Stale tasks:** a task whose activity ended without a worker (cancelled, or interrupted by a
-  boundary event) is removed the next time a worker fetches from its topic.
+  boundary event) is removed the next time a worker fetches from its topic. Incidents are never
+  fetched, so a stale incident is removed when an operator query (`GET /external-task`, `/count`,
+  `/{id}`, `/{id}/errorDetails`) reaches it.
+- **Incidents cannot be locked:** `POST /external-task/{id}/lock` on a task with `retries = 0`
+  returns `400`. Set retries first.
 - **Scope:** the external-task endpoints above. Start processes
   and correlate messages through the [Fleans REST API](https://nightbaker.github.io/fleans/reference/api/).
 - **Rejected results:** if the engine refuses a `complete` outright (for example, outputs it cannot

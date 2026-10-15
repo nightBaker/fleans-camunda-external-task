@@ -165,6 +165,22 @@ public class StreamHandlerTests
     }
 
     [TestMethod]
+    public async Task Business_key_too_long_for_the_column_fails_the_activity_instead_of_retrying()
+    {
+        // Arrange
+        var (instanceId, evt) = NewTask("bill-order", inputs: [new InputMapping("=ref", ReservedInputs.BusinessKey)]);
+        FakeWorkflowInstance.Activate(evt.ActivityInstanceId, ("ref", new string('x', ReservedInputs.MaxLength + 1)));
+
+        // Act
+        await Publish(evt);
+        await WaitUntil(() => Task.FromResult(FakeWorkflowInstance.Calls.Contains($"fail:{evt.ActivityId}:400")));
+
+        // Assert
+        Assert.Contains($"fail:{evt.ActivityId}:400", FakeWorkflowInstance.Calls);
+        Assert.AreEqual(0, await RowCount(instanceId));
+    }
+
+    [TestMethod]
     public async Task Priority_that_is_not_a_number_fails_the_activity()
     {
         // Arrange
