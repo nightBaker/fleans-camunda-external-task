@@ -9,6 +9,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Orleans.Runtime;
+using Orleans.Streams;
 using Orleans.TestingHost;
 
 namespace Fleans.Plugins.CamundaExternalTask.Tests;
@@ -325,9 +326,10 @@ public class StreamHandlerTests
 
     private sealed class SiloConfigurator : ISiloConfigurator
     {
+        // Implicit-only pub-sub and no PubSubStore, as in the engine and the host (nightBaker/fleans#912).
         public void Configure(ISiloBuilder silo) => silo
-            .AddMemoryStreams(WorkflowEventStreams.StreamProvider)
-            .AddMemoryGrainStorage("PubSubStore")
+            .AddMemoryStreams(WorkflowEventStreams.StreamProvider,
+                b => b.ConfigureStreamPubSub(StreamPubSubType.ImplicitOnly))
             .ConfigureServices(services =>
                 services.AddCamundaExternalTasks(o => o.UseSqlite(ConnectionString)));
     }
@@ -335,7 +337,8 @@ public class StreamHandlerTests
     private sealed class ClientConfigurator : IClientBuilderConfigurator
     {
         public void Configure(Microsoft.Extensions.Configuration.IConfiguration configuration, IClientBuilder client) =>
-            client.AddMemoryStreams(WorkflowEventStreams.StreamProvider);
+            client.AddMemoryStreams(WorkflowEventStreams.StreamProvider,
+                b => b.ConfigureStreamPubSub(StreamPubSubType.ImplicitOnly));
     }
 }
 
