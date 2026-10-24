@@ -201,7 +201,7 @@ name, it fails with `network fleans_default declared as external, but could not 
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `ConnectionStrings__orleans-redis` | *required* | The engine's Redis: clustering, PubSubStore, reminders, streams. |
+| `ConnectionStrings__orleans-redis` | *required* | The engine's Redis: clustering, reminders, streams. |
 | `Orleans__ClusterId`, `Orleans__ServiceId` | *required* | The engine's cluster ids. |
 | `ConnectionStrings__camunda-external-tasks` | *required* | Database for the `camunda_external_tasks` table. The database and table are created at startup. |
 | `CamundaExternalTasks__Provider` | `Postgres` | `Postgres` or `Sqlite`. Use PostgreSQL with more than one replica. |

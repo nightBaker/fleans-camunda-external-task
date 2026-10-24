@@ -3,6 +3,7 @@ using Fleans.Worker.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Orleans.Configuration;
+using Orleans.Streams;
 using StackExchange.Redis;
 using Universley.OrleansContrib.StreamsProvider.Redis;
 
@@ -54,16 +55,16 @@ builder.UseOrleans(silo =>
         ?? throw new InvalidOperationException("ConnectionStrings:orleans-redis is required.");
     silo.UseRedisReminderService(o => o.ConfigurationOptions = ConfigurationOptions.Parse(orleansRedis));
 
-    // Aspire injects Orleans__Clustering__* / Orleans__GrainStorage__PubSubStore__*; the engine's
-    // compose bundle and Helm chart only pass the Redis connection string and cluster ids.
+    // Aspire injects Orleans__Clustering__*; the engine's compose bundle and Helm chart only pass
+    // the Redis connection string and cluster ids.
     if (string.IsNullOrEmpty(builder.Configuration["Orleans:Clustering:ProviderType"]))
-    {
         silo.UseRedisClustering(orleansRedis);
-        silo.AddRedisGrainStorage("PubSubStore",
-            o => o.ConfigurationOptions = ConfigurationOptions.Parse(orleansRedis));
-    }
 
-    silo.AddPersistentStreams(StreamProviderName, RedisStreamFactory.Create, null);
+    // Implicit-only pub-sub, like the engine (nightBaker/fleans#912): the handler subscribes via
+    // [RegexImplicitStreamSubscription], so there is no rendezvous grain and no PubSubStore.
+    // Every silo of the cluster must use the same type — a mixed cluster loses events.
+    silo.AddPersistentStreams(StreamProviderName, RedisStreamFactory.Create,
+        b => b.ConfigureStreamPubSub(StreamPubSubType.ImplicitOnly));
 });
 
 // External-task table: CamundaExternalTasks:Provider = Postgres (default) | Sqlite,
