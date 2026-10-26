@@ -1,5 +1,11 @@
 # Fleans Camunda External Task
 
+> **Moved.** This plugin now lives in **[nightBaker/fleans-plugins](https://github.com/nightBaker/fleans-plugins)**
+> ([guide](https://github.com/nightBaker/fleans-plugins/blob/main/docs/camunda-external-task/README.md)),
+> together with the other Fleans plugins. The NuGet package `Fleans.Plugins.CamundaExternalTask` and the
+> image `ghcr.io/nightbaker/fleans-camunda-external-task` keep their names; new versions are released
+> from there. This repository is no longer maintained.
+
 Run your **Camunda 7 external-task workers on [Fleans](https://github.com/nightBaker/fleans)
 without rewriting them.** This plugin serves the Camunda 7 `/engine-rest/external-task` REST API
 on top of Fleans, so existing workers usually need only a new base URL. That covers
